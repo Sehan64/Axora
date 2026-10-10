@@ -42,12 +42,11 @@ jobs:
           java-version: "21"
           cache: gradle
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install NDK and CMake
+      - name: Install NDK, CMake, platform and build-tools
         run: |
-          sdkmanager "ndk;29.0.13113866" "cmake;3.31.6"
+          SDKMANAGER=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager | head -1)
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "ndk;29.0.14206865" "cmake;3.31.6" "platforms;android-36" "build-tools;36.0.0"
 
       - name: Build reignite DEX
         run: ./gradlew :reignite:assembleDebug
