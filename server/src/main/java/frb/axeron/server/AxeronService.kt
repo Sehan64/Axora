@@ -11,7 +11,6 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.content.pm.UserInfo
 import android.ddm.DdmHandleAppName
-import android.os.Binder
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -19,7 +18,6 @@ import android.os.IPowerManager
 import android.os.Looper
 import android.os.Parcel
 import android.os.Parcelable
-import android.os.PowerManager
 import android.os.RemoteException
 import android.os.SELinux
 import android.os.ServiceManager
@@ -271,39 +269,6 @@ open class AxeronService :
         }
     }
 
-    val lockToken = Binder()
-
-    fun acquire() {
-        LOGGER.i("Acquire wakelock")
-        try {
-            val flags = PowerManager.PARTIAL_WAKE_LOCK
-            val tag = "axeron::wakelock"
-            val pkg = "axeron_server"
-            val uid = Os.getuid()
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                powerManager.get().acquireWakeLockWithUid(lockToken, flags, tag, pkg, uid, 0, null)
-            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                powerManager.get().acquireWakeLockWithUid(lockToken, flags, tag, pkg, uid, 0)
-            } else {
-                powerManager.get().acquireWakeLockWithUid(lockToken, flags, tag, pkg, uid)
-            }
-            LOGGER.i("Acquire wakelock success")
-        } catch (e: Exception) {
-            LOGGER.e("Acquire wakelock failed", e)
-        }
-    }
-
-    fun release() {
-        LOGGER.i("Release wakelock")
-        try {
-            powerManager.get().releaseWakeLock(lockToken, 0)
-            LOGGER.i("Release wakelock success")
-        } catch (e: Exception) {
-            LOGGER.e("Release wakelock failed", e)
-        }
-    }
-
     override fun onCreateUserServiceManager(): AxeronUserServiceManager {
         return AxeronUserServiceManager(getEnvironment(TYPE_ENV)?.getEnv())
     }
@@ -377,8 +342,6 @@ open class AxeronService :
             sendBinderToClient()
             sendBinderToManager()
         }
-
-        acquire()
     }
 
     fun sendBinderToClient() {
@@ -802,11 +765,6 @@ open class AxeronService :
 
     @Throws(RemoteException::class)
     override fun dispatchPackageChanged(intent: Intent?) {
-    }
-
-    override fun exit() {
-        release()
-        super.exit()
     }
 
     override fun getApplications(userId: Int): ParcelableListSlice<PackageInfo?> {
