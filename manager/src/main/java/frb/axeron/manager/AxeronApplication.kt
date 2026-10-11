@@ -27,7 +27,7 @@ class AxeronApplication : Engine() {
             Axerish.initialize(BuildConfig.APPLICATION_ID)
             Shell.setDefaultBuilder(createShellBuilder())
             Shell.enableLegacyStderrRedirection = true
-            Shell.enableVerboseLogging = false
+            Shell.enableVerboseLogging = BuildConfig.DEBUG
 
             if (Build.VERSION.SDK_INT >= 28) {
                 HiddenApiBypass.setHiddenApiExemptions("")
