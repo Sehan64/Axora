@@ -148,6 +148,7 @@
     <string name="abi_supported">ABI Supported</string>
     <string name="selinux_context">SELinux Context</string>
     <string name="home_click_to_install">Click to install</string>
+    <string name="power_options">Power options</string>
     <string name="home_kernel">Kernel</string>
     <string name="home_selinux_status">SELinux Status</string>
     <string name="report_issue">Having Trouble?</string>
@@ -230,6 +231,13 @@
     <string name="settings_category_path">Path</string>
     <string name="settings_category_other">Other</string>
     <string name="settings_category_appearance">Appearance</string>
+    <string name="appearance_section_theme">Theme</string>
+    <string name="appearance_section_color">Color</string>
+    <string name="appearance_section_shape">Shape</string>
+    <string name="appearance_section_layout">Layout</string>
+    <string name="appearance_section_text">Text</string>
+    <string name="appearance_section_home">Home</string>
+    <string name="appearance_section_language">Language</string>
     <string name="light_theme">Light</string>
     <string name="dark_theme">Dark</string>
     <string name="color_palette_dialog_title">Color Palette</string>
@@ -268,6 +276,8 @@
     <string name="accent_intensity_desc">Adjust the saturation of accent colors</string>
     <string name="bottom_bar_size">Bottom Bar Size</string>
     <string name="bottom_bar_size_desc">Adjust the size of the floating navigation pill</string>
+    <string name="ui_scale">UI Scale</string>
+    <string name="ui_scale_desc">Rescale the entire app interface</string>
     <string name="secondary_color">Secondary Color</string>
     <string name="tertiary_color">Tertiary Color</string>
     <string name="secondary_tertiary_not_set">Not set</string>

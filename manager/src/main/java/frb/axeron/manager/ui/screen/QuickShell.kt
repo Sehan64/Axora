@@ -106,6 +106,7 @@ import frb.axeron.manager.ui.component.CheckBoxText
 import frb.axeron.manager.ui.component.KeyEventBlocker
 import frb.axeron.manager.ui.component.SettingsItem
 import frb.axeron.manager.ui.component.SettingsItemExpanded
+import frb.axeron.manager.ui.util.LocalBottomBarHidden
 import frb.axeron.manager.ui.util.LocalSnackbarHost
 import frb.axeron.manager.ui.util.PrefsEnumHelper
 import frb.axeron.manager.ui.viewmodel.QuickShellViewModel
@@ -132,6 +133,7 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
     var previousScrollOffset by remember { mutableIntStateOf(0) }
 
     // FAB visibility
+    val bottomBarHidden = LocalBottomBarHidden.current
     var fabVisible by remember { mutableStateOf(true) }
 
     val view = LocalView.current
@@ -146,10 +148,19 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
         snapshotFlow { listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset }
             .collect { (index, offset) ->
                 if (!viewModel.isRunning) {  // hanya update FAB kalau sedang tidak running
-                    if (index > previousIndex || (index == previousIndex && offset > previousScrollOffset)) {
+                    val isScrollingDown = index > previousIndex ||
+                        (index == previousIndex && offset > previousScrollOffset + 4)
+                    val isScrollingUp = index < previousIndex ||
+                        (index == previousIndex && offset < previousScrollOffset - 4)
+
+                    if (isScrollingDown) {
                         fabVisible = false
-                    } else if (index < previousIndex || offset < previousScrollOffset) {
+                        if (!bottomBarHidden.value) bottomBarHidden.value = true
+                    } else if (isScrollingUp) {
                         fabVisible = true
+                        if (bottomBarHidden.value) bottomBarHidden.value = false
+                    } else if (index == 0 && offset == 0 && bottomBarHidden.value) {
+                        bottomBarHidden.value = false
                     }
                 }
                 previousIndex = index
@@ -234,13 +245,20 @@ fun QuickShellScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewMode
                 enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
                 exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
             ) {
-                val context = LocalContext.current
-                FloatingActionButton(onClick = {
-                    scope.launch {
-                        saveLogsToDownload(context, logs, snackBarHost)
+                Box(
+                    modifier = Modifier.padding(
+                        bottom = if (bottomBarHidden.value) 26.dp else 96.dp,
+                        end = 16.dp
+                    )
+                ) {
+                    val context = LocalContext.current
+                    FloatingActionButton(onClick = {
+                        scope.launch {
+                            saveLogsToDownload(context, logs, snackBarHost)
+                        }
+                    }) {
+                        Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                     }
-                }) {
-                    Icon(Icons.Default.Save, contentDescription = stringResource(R.string.save))
                 }
             }
         },

@@ -13,6 +13,8 @@ import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
@@ -20,7 +22,6 @@ import androidx.compose.material3.rememberTopAppBarState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -69,6 +70,11 @@ fun PluginList(
 
     var expandedPluginId by rememberSaveable { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+
+    val useBanner = remember(context) {
+        context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+            .getBoolean("use_banner", true)
+    }
 
     val updateText = stringResource(R.string.update)
     val changelogText = stringResource(R.string.changelog)
@@ -249,15 +255,12 @@ fun PluginList(
                 }
 
                 else -> {
-                    items(viewModel.pluginList) { plugin ->
-                        val updatedModule by produceState(
-                            key1 = plugin.prop.id,
-                            initialValue = Triple("", "", "")
-                        ) {
-                            value = withContext(Dispatchers.IO) {
-                                viewModel.checkUpdate(plugin)
-                            }
-                        }
+                    items(
+                        items = viewModel.pluginList,
+                        key = { it.prop.id }
+                    ) { plugin ->
+                        val updateMapState by viewModel.updateMap.collectAsState()
+                        val updatedModule = updateMapState[plugin.prop.id] ?: Triple("", "", "")
 
                         PluginItem(
                             navigator = navigator,
@@ -265,6 +268,8 @@ fun PluginList(
                             viewModel = viewModel,
                             plugin = plugin,
                             updateUrl = updatedModule.first,
+                            useBanner = useBanner,
+                            bannerData = viewModel.bannerCache[plugin.prop.id],
                             onUninstall = {
                                 scope.launch { onModuleUninstall(plugin) }
                             },

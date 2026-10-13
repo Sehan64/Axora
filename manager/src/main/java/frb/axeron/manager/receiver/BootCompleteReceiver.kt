@@ -59,8 +59,12 @@ class BootCompleteReceiver : BroadcastReceiver() {
     }
 
     private fun startRoot(context: Context, pending: PendingResult) {
-        if (!Shell.getShell().isRoot) {
-            Shell.getCachedShell()?.close()
+        // Non-blocking check: Shell.getShell() parks until a root shell appears, which can hang
+        // the boot receiver indefinitely. Use the cached shell only; if it is not there yet, do
+        // not block the broadcast.
+        val shell = Shell.getCachedShell()
+        if (shell == null || !shell.isAlive || !shell.isRoot) {
+            Log.w(TAG, "Boot: no cached root shell available, skipping auto start")
             safeFinish(pending)
             return
         }

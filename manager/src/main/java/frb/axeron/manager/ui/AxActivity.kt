@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.material3.Badge
@@ -41,10 +42,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,6 +75,7 @@ import com.ramcosta.composedestinations.generated.destinations.ExecutePluginActi
 import com.ramcosta.composedestinations.generated.destinations.FlashScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.HomeScreenDestination
 import com.ramcosta.composedestinations.generated.destinations.QuickShellScreenDestination
+import com.ramcosta.composedestinations.generated.destinations.SettingsCategoryScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import com.ramcosta.composedestinations.navigation.dependency
 import com.ramcosta.composedestinations.utils.isRouteOnBackStackAsState
@@ -235,15 +240,21 @@ class AxActivity : ComponentActivity() {
             ActivateScreenDestination.route -> false
             FlashScreenDestination.route -> false
             ExecutePluginActionScreenDestination.route -> false
+            SettingsCategoryScreenDestination.route -> false
             else -> true
         }
 
         val bottomBarHidden = remember { mutableStateOf(false) }
 
+        LaunchedEffect(currentDestination?.route) {
+            bottomBarHidden.value = false
+        }
+
         val bottomBarRoutes = remember {
             BottomBarDestination.entries.map { it.direction.route }.toSet()
         }
 
+        val pluginUpdateCount by pluginViewModel.updateCount.collectAsState()
         Box {
             CompositionLocalProvider(
                 LocalSnackbarHost provides snackBarHostState,
@@ -259,7 +270,9 @@ class AxActivity : ComponentActivity() {
                         dependenciesContainerBuilder = {
                             dependency(viewModelGlobal)
                         },
-                        defaultTransitions = createNavTransitions(bottomBarRoutes)
+                        defaultTransitions = remember(bottomBarRoutes) {
+                            createNavTransitions(bottomBarRoutes)
+                        }
                     )
                 }
 
@@ -280,7 +293,7 @@ class AxActivity : ComponentActivity() {
                             navigator,
                             activateViewModel.axeronInfo,
                             activateViewModel.isShizukuActive,
-                            pluginViewModel.pluginUpdateCount,
+                            pluginUpdateCount,
                             settingsViewModel.bottomBarScale
                         )
                     }
@@ -289,7 +302,6 @@ class AxActivity : ComponentActivity() {
         }
     }
 
-    @Composable
     private fun createNavTransitions(
         bottomBarRoutes: Set<String>
     ): NavHostAnimatedDestinationStyle {
@@ -382,52 +394,73 @@ class AxActivity : ComponentActivity() {
                     end = 16.dp * bottomBarScale
                 )
         ) {
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(20.dp * bottomBarScale))
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(
+            // A real pill: percent = 50 keeps every corner fully rounded regardless of the bar's
+            // height or the scale animation. The previous fixed 20dp radius was smaller than half
+            // the row's height, so the ends only ever looked mildly rounded - a rounded rectangle
+            // rather than a capsule. Surface also gives the bar real tonal elevation so it sits
+            // above the content instead of being a flat painted rectangle.
+            Surface(
+                shape = RoundedCornerShape(percent = 50),
+                color = MaterialTheme.colorScheme.surfaceContainer,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                tonalElevation = 3.dp
+            ) {
+                Row(
+                    modifier = Modifier.padding(
                         horizontal = 8.dp * bottomBarScale,
                         vertical = 6.dp * bottomBarScale
                     ),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp * bottomBarScale)
-            ) {
-                BottomBarDestination.entries
-                    .forEach { destination ->
-                        if (!axeronServerInfo.isRunning() && destination.needAxeron) return@forEach
-                        if (destination == BottomBarDestination.Privilege && !isShizukuActive) return@forEach
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp * bottomBarScale)
+                ) {
+                    BottomBarDestination.entries
+                        .forEach { destination ->
+                            if (!axeronServerInfo.isRunning() && destination.needAxeron) return@forEach
+                            if (destination == BottomBarDestination.Privilege && !isShizukuActive) return@forEach
 
-                        val isCurrentDestOnBackStack by navController.isRouteOnBackStackAsState(
-                            destination.direction
-                        )
-                        val label = stringResource(id = destination.labelId)
+                            val isCurrentDestOnBackStack by navController.isRouteOnBackStackAsState(
+                                destination.direction
+                            )
+                            val label = stringResource(id = destination.labelId)
 
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp * bottomBarScale))
-                                .background(
-                                    if (isCurrentDestOnBackStack)
-                                        MaterialTheme.colorScheme.secondaryContainer
-                                    else Color.Transparent
-                                )
-                                .clickable {
-                                    if (isCurrentDestOnBackStack) {
-                                        navigator.popBackStack(destination.direction, false)
-                                    }
-                                    navigator.navigate(destination.direction) {
-                                        popUpTo(NavGraphs.root) {
-                                            saveState = true
+                            // The item is a fixed square (icon + uniform padding), so a circle
+                            // indicator always stays a circle at any scale. A 12dp rounded rect
+                            // read as a lopsided blob against the pill's own curvature.
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (isCurrentDestOnBackStack)
+                                            MaterialTheme.colorScheme.secondaryContainer
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        if (isCurrentDestOnBackStack) {
+                                            navigator.popBackStack(destination.direction, false)
                                         }
-                                        launchSingleTop = true
-                                        restoreState = true
+                                        navigator.navigate(destination.direction) {
+                                            popUpTo(NavGraphs.root) {
+                                                saveState = true
+                                            }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
                                     }
-                                }
-                                .padding(12.dp * bottomBarScale),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (destination == BottomBarDestination.Plugin && moduleUpdateCount > 0) {
-                                BadgedBox(badge = { Badge { Text(moduleUpdateCount.toString()) } }) {
+                                    .padding(12.dp * bottomBarScale),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                if (destination == BottomBarDestination.Plugin && moduleUpdateCount > 0) {
+                                    BadgedBox(badge = { Badge { Text(moduleUpdateCount.toString()) } }) {
+                                        Icon(
+                                            imageVector = if (isCurrentDestOnBackStack) destination.iconSelected else destination.iconNotSelected,
+                                            contentDescription = label,
+                                            tint = if (isCurrentDestOnBackStack)
+                                                MaterialTheme.colorScheme.onSecondaryContainer
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(24.dp * bottomBarScale)
+                                        )
+                                    }
+                                } else {
                                     Icon(
                                         imageVector = if (isCurrentDestOnBackStack) destination.iconSelected else destination.iconNotSelected,
                                         contentDescription = label,
@@ -437,18 +470,9 @@ class AxActivity : ComponentActivity() {
                                         modifier = Modifier.size(24.dp * bottomBarScale)
                                     )
                                 }
-                            } else {
-                                Icon(
-                                    imageVector = if (isCurrentDestOnBackStack) destination.iconSelected else destination.iconNotSelected,
-                                    contentDescription = label,
-                                    tint = if (isCurrentDestOnBackStack)
-                                        MaterialTheme.colorScheme.onSecondaryContainer
-                                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(24.dp * bottomBarScale)
-                                )
                             }
                         }
-                    }
+                }
             }
         }
     }

@@ -1,69 +1,52 @@
 package frb.axeron.manager.ui.component
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialogDefaults
-import androidx.compose.material3.BasicAlertDialog
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.DialogProperties
 import frb.axeron.manager.R
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * Update prompt, now built on the shared [MaterialDialog] scaffold.
+ *
+ * It used to hand-roll a `BasicAlertDialog` + `Surface` with its own 20dp corner radius, 320dp
+ * width, 24dp padding, `headlineSmall` title and - most visibly - two `TextButton`s laid out with
+ * no gap between them, so its actions were flush against each other unlike every other dialog in
+ * the app. Delegating to the shared container fixes all of that at once and makes the update
+ * prompt honour the Appearance corner-style setting.
+ */
 @Composable
 fun UpdateDialog(
     onDismiss: () -> Unit,
     onUpdate: () -> Unit
 ) {
-    BasicAlertDialog(
+    MaterialDialog(
         onDismissRequest = { },
+        title = {
+            Text(
+                text = stringResource(R.string.update_available_title),
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Text(text = stringResource(R.string.update_available_message))
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(text = stringResource(R.string.update_close))
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onUpdate) {
+                Text(text = stringResource(R.string.update_action))
+            }
+        },
         properties = DialogProperties(
+            usePlatformDefaultWidth = false,
             dismissOnBackPress = false,
             dismissOnClickOutside = false
         )
-    ) {
-        Surface(
-            modifier = Modifier
-                .width(320.dp),
-            shape = RoundedCornerShape(20.dp),
-            tonalElevation = AlertDialogDefaults.TonalElevation,
-            color = MaterialTheme.colorScheme.surface,
-        ) {
-            Column(modifier = Modifier.padding(24.dp)) {
-                Text(
-                    text = stringResource(R.string.update_available_title),
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.padding(bottom = 16.dp)
-                )
-                Text(
-                    text = stringResource(R.string.update_available_message),
-                    style = MaterialTheme.typography.bodyMedium,
-                    modifier = Modifier.padding(bottom = 24.dp)
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    TextButton(onClick = onDismiss) {
-                        Text(text = stringResource(R.string.update_close))
-                    }
-                    TextButton(onClick = onUpdate) {
-                        Text(text = stringResource(R.string.update_action))
-                    }
-                }
-            }
-        }
-    }
+    )
 }

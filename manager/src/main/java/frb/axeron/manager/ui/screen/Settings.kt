@@ -1,16 +1,8 @@
 package frb.axeron.manager.ui.screen
 
-import android.graphics.Bitmap
-import android.graphics.BitmapFactory
-import android.net.Uri
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,10 +14,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.filled.Coffee
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,164 +27,44 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
-
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.appcompat.app.AppCompatDelegate
-import androidx.compose.runtime.snapshotFlow
-import frb.axeron.manager.ui.util.LocalBottomBarHidden
-
-import frb.axeron.api.core.AxeronSettings
-import androidx.lifecycle.compose.rememberLifecycleOwner
 import com.ramcosta.composedestinations.annotation.Destination
 import com.ramcosta.composedestinations.annotation.RootGraph
+import com.ramcosta.composedestinations.generated.destinations.SettingsCategoryScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
 import frb.axeron.manager.BuildConfig
 import frb.axeron.manager.R
-import frb.axeron.manager.ui.component.PaletteDialog
 import frb.axeron.manager.ui.component.SearchAppBar
-import frb.axeron.manager.ui.screen.settings.ActivationSettings
-import frb.axeron.manager.ui.screen.settings.AppearanceSettings
-import frb.axeron.manager.ui.screen.settings.ConnectionSettings
-import frb.axeron.manager.ui.screen.settings.OtherSettings
-import frb.axeron.manager.ui.screen.settings.PathSettings
+import frb.axeron.manager.ui.screen.settings.SettingsBody
+import frb.axeron.manager.ui.screen.settings.SettingsCategoryKey
+import frb.axeron.manager.ui.screen.settings.categoryTitleRes
 import frb.axeron.manager.ui.viewmodel.ViewModelGlobal
-import frb.axeron.manager.ui.theme.adjust
-import frb.axeron.manager.ui.theme.basePrimaryDefault
-import frb.axeron.manager.ui.theme.hexToColor
-import frb.axeron.manager.ui.util.LocaleHelper
-import androidx.compose.ui.platform.LocalContext
-import java.io.File
-import java.util.Locale
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-
-enum class ColorTarget {
-    PRIMARY,
-    SECONDARY,
-    TERTIARY
-}
-
-private fun copyUriToFile(context: android.content.Context, uri: Uri): String {
-    val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        ?: return File(context.filesDir, "home_banner_${System.currentTimeMillis()}.jpg").absolutePath
-
-    val isGif = bytes.size > 4 &&
-        bytes[0] == 0x47.toByte() && bytes[1] == 0x49.toByte() &&
-        bytes[2] == 0x46.toByte() && bytes[3] == 0x38.toByte()
-
-    if (isGif) {
-        val file = File(context.filesDir, "home_banner_${System.currentTimeMillis()}.gif")
-        file.writeBytes(bytes)
-        return file.absolutePath
-    }
-
-    val file = File(context.filesDir, "home_banner_${System.currentTimeMillis()}.jpg")
-    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-    BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-        file.writeBytes(bytes)
-        return file.absolutePath
-    }
-
-    var sampleSize = 1
-    val maxDimension = 1600
-    while (bounds.outWidth / sampleSize > maxDimension ||
-        bounds.outHeight / sampleSize > maxDimension
-    ) {
-        sampleSize *= 2
-    }
-
-    val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
-    if (bitmap == null) {
-        file.writeBytes(bytes)
-        return file.absolutePath
-    }
-
-    file.outputStream().use { out -> bitmap.compress(Bitmap.CompressFormat.JPEG, 85, out) }
-    bitmap.recycle()
-    return file.absolutePath
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Destination<RootGraph>
 @Composable
 fun SettingsScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlobal) {
-    val activateViewModel = viewModelGlobal.activateViewModel
-    val settings = viewModelGlobal.settingsViewModel
-    
     var searchText by remember { mutableStateOf("") }
     var showDevDialog by remember { mutableStateOf(false) }
-    var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
-
-    val axeronRunning = activateViewModel.axeronInfo.isRunning()
-    val context = LocalContext.current
-    val isDarkMode = isSystemInDarkTheme()
-    val scope = rememberCoroutineScope()
-
-    val bannerPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        if (uri != null) {
-            scope.launch {
-                val path = withContext(Dispatchers.IO) { copyUriToFile(context, uri) }
-                settings.setBannerImage(path)
-            }
-        }
-    }
-    
-    var currentLanguageDisplay by remember { 
-        mutableStateOf<String?>(null)
-    }
-    
-    LaunchedEffect(Unit) {
-        currentLanguageDisplay = AppCompatDelegate.getApplicationLocales()[0]?.displayLanguage?.replaceFirstChar {
-            if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString()
-        } ?: context.getString(R.string.system_default)
-    }
-    
-    val prefs = AxeronSettings.getPreferences()
-    val currentColor = hexToColor(settings.customPrimaryColorHex)
-
-    val lifecycleOwner = rememberLifecycleOwner()
-    val bottomBarHidden = LocalBottomBarHidden.current
-    val scrollState = rememberScrollState()
-
-    LaunchedEffect(scrollState) {
-        var lastOffset = scrollState.value
-        snapshotFlow { scrollState.value }
-            .collect { currentOffset ->
-                val isScrollingDown = currentOffset > lastOffset + 4
-                val isScrollingUp = currentOffset < lastOffset - 4
-
-                when {
-                    isScrollingDown && !bottomBarHidden.value -> bottomBarHidden.value = true
-                    isScrollingUp && bottomBarHidden.value -> bottomBarHidden.value = false
-                }
-
-                lastOffset = currentOffset
-            }
-    }
 
     DeveloperInfo(
         showDevDialog
@@ -231,155 +102,60 @@ fun SettingsScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelG
                 }
             )
         }
-        ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .padding(paddingValues)
-                .verticalScroll(scrollState)
-                .padding(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            ConnectionSettings(
-                searchText = searchText,
-                isTcpModeEnabled = settings.isTcpModeEnabled,
-                tcpPortInt = settings.tcpPortInt,
-                onTcpModeChange = { settings.setTcpMode(it) },
-                onTcpPortChange = { settings.setTcpPort(it) }
-            )
-
-            AppearanceSettings(
-                searchText = searchText,
-                autoThemeEnabled = settings.getAppThemeId == 0,
-                onAutoThemeChange = { enabled ->
-                    if (enabled) {
-                        settings.setAppTheme(0)
-                    } else {
-                        settings.setAppTheme(if (isDarkMode) 1 else 2)
-                    }
-                },
-                darkModeEnabled = settings.getAppThemeId == 1,
-                onDarkModeChange = { enabled ->
-                    settings.setAppTheme(if (enabled) 1 else 2)
-                },
-                dynamicColorEnabled = settings.isDynamicColorEnabled,
-                onDynamicColorChange = { settings.setDynamicColor(it) },
-                amoledEnabled = settings.isAmoledEnabled,
-                onAmoledChange = { settings.setAmoled(it) },
-                cornerStyle = settings.cornerStyle,
-                onCornerStyleChange = { settings.updateCornerStyle(it) },
-                accentIntensity = settings.accentIntensity,
-                onAccentIntensityChange = { settings.updateAccentIntensity(it) },
-                bottomBarScale = settings.bottomBarScale,
-                onBottomBarScaleChange = { settings.updateBottomBarScale(it) },
-                secondaryColorHex = settings.customSecondaryColorHex,
-                onSecondaryPaletteClick = {
-                    colorTarget = ColorTarget.SECONDARY
-                },
-                tertiaryColorHex = settings.customTertiaryColorHex,
-                onTertiaryPaletteClick = {
-                    colorTarget = ColorTarget.TERTIARY
-                },
-                bannerImagePath = settings.bannerImagePath,
-                onBannerClick = { bannerPicker.launch("image/*") },
-                onBannerRemove = {
-                    settings.bannerImagePath?.let { path ->
-                        scope.launch {
-                            withContext(Dispatchers.IO) { File(path).delete() }
-                        }
-                    }
-                    settings.removeBannerImage()
-                },
-                systemFontEnabled = settings.isSystemFontEnabled,
-                onSystemFontChange = { settings.setSystemFont(it) },
-                fontChoice = settings.fontChoice,
-                onFontChoiceChange = { settings.updateFontChoice(it) },
-                currentLanguageDisplay = currentLanguageDisplay,
-                onLanguageClick = {
-                    LocaleHelper.launchSystemLanguageSettings(context)
-                },
-                onPaletteClick = {
-                    colorTarget = ColorTarget.PRIMARY
-                },
-                onPresetSelected = { hex ->
-                    settings.setCustomPrimaryColor(hex)
-                },
-                currentColorHex = settings.customPrimaryColorHex
-            )
-
-            ActivationSettings(
-                searchText = searchText,
-                axeronRunning = axeronRunning,
-                isActivateOnBootEnabled = settings.isActivateOnBootEnabled,
-                isAutoRestartEnabled = settings.isAutoRestartEnabled,
-                isIgniteWhenRelogEnabled = settings.isIgniteWhenRelogEnabled,
-                onActivateOnBootChange = { settings.setActivateOnBoot(it) },
-                onAutoRestartChange = { settings.setAutoRestart(it) },
-                onIgniteWhenRelogChange = { settings.setIgniteWhenRelog(it) },
-                isShizukuActive = activateViewModel.isShizukuActive,
-                onShizukuInterceptChange = { activateViewModel.setShizukuIntercept(it) }
-            )
-
-            if (axeronRunning) {
-                PathSettings(
-                    searchText = searchText,
-                    navigator = navigator
-                )
+    ) { paddingValues ->
+        SettingsBody(
+            modifier = Modifier.padding(paddingValues),
+            navigator = navigator,
+            viewModelGlobal = viewModelGlobal,
+            searchText = searchText,
+            onlyCategory = null,
+            onCategoryClick = { key ->
+                navigator.navigate(SettingsCategoryScreenDestination(key))
             }
+        )
+    }
+}
 
-            OtherSettings(
-                searchText = searchText,
-                axeronRunning = axeronRunning,
-                navigator = navigator,
-                settingsViewModel = settings
+/**
+ * Detail screen for a single settings category, reached from the root category cards.
+ *
+ * The bottom bar is hidden for this route (see AxActivity), so the top bar carries the
+ * category name and a back arrow; the body renders only that category's rows.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Destination<RootGraph>
+@Composable
+fun SettingsCategoryScreen(
+    navigator: DestinationsNavigator,
+    viewModelGlobal: ViewModelGlobal,
+    category: SettingsCategoryKey
+) {
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Text(
+                        text = stringResource(categoryTitleRes(category)),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                },
+                navigationIcon = {
+                    IconButton(onClick = { navigator.popBackStack() }) {
+                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
+                    }
+                }
             )
         }
-    }
-
-
-
-    val currentSecondaryColor = settings.customSecondaryColorHex?.let { hexToColor(it) }
-        ?: basePrimaryDefault.adjust(hueDelta = 20f, satMul = 0.70f)
-    val currentTertiaryColor = settings.customTertiaryColorHex?.let { hexToColor(it) }
-        ?: basePrimaryDefault.adjust(hueDelta = -60f, satMul = 0.70f)
-
-    when (colorTarget) {
-        ColorTarget.PRIMARY -> PaletteDialog(
-            initialColor = currentColor,
-            onDismiss = { colorTarget = null },
-            onConfirm = { hex ->
-                settings.setCustomPrimaryColor(hex)
-                colorTarget = null
-            },
-            onReset = {
-                settings.removeCustomPrimaryColor()
-                colorTarget = null
-            }
+    ) { paddingValues ->
+        SettingsBody(
+            modifier = Modifier.padding(paddingValues),
+            navigator = navigator,
+            viewModelGlobal = viewModelGlobal,
+            searchText = "",
+            onlyCategory = category,
+            onCategoryClick = {}
         )
-        ColorTarget.SECONDARY -> PaletteDialog(
-            initialColor = currentSecondaryColor,
-            onDismiss = { colorTarget = null },
-            onConfirm = { hex ->
-                settings.setCustomSecondaryColor(hex)
-                colorTarget = null
-            },
-            onReset = {
-                settings.removeCustomSecondaryColor()
-                colorTarget = null
-            }
-        )
-        ColorTarget.TERTIARY -> PaletteDialog(
-            initialColor = currentTertiaryColor,
-            onDismiss = { colorTarget = null },
-            onConfirm = { hex ->
-                settings.setCustomTertiaryColor(hex)
-                colorTarget = null
-            },
-            onReset = {
-                settings.removeCustomTertiaryColor()
-                colorTarget = null
-            }
-        )
-        null -> {}
     }
 }
 
