@@ -275,6 +275,8 @@
     <string name="accent_intensity_desc">調整強調色的飽和度</string>
     <string name="bottom_bar_size">底部欄大小</string>
     <string name="bottom_bar_size_desc">調整懸浮導航膠囊的大小</string>
+    <string name="ui_scale">介面縮放</string>
+    <string name="ui_scale_desc">縮放整個應用程式介面</string>
     <string name="secondary_color">次要顏色</string>
     <string name="tertiary_color">第三顏色</string>
     <string name="secondary_tertiary_not_set">未設定</string>

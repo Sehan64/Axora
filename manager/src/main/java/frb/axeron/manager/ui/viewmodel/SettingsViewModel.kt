@@ -256,6 +256,18 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    var uiScale by mutableStateOf(
+        AxeronSettings.getUiScale()
+    )
+        private set
+
+    fun updateUiScale(scale: Float) {
+        viewModelScope.launch {
+            uiScale = scale
+            AxeronSettings.setUiScale(scale)
+        }
+    }
+
     var bannerImagePath by mutableStateOf(
         AxeronSettings.getHomeBanner()
     )

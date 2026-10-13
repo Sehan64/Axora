@@ -275,6 +275,8 @@
     <string name="accent_intensity_desc">调整强调色的饱和度</string>
     <string name="bottom_bar_size">底部栏大小</string>
     <string name="bottom_bar_size_desc">调整悬浮导航胶囊的大小</string>
+    <string name="ui_scale">界面缩放</string>
+    <string name="ui_scale_desc">缩放整个应用界面</string>
     <string name="secondary_color">次要颜色</string>
     <string name="tertiary_color">第三颜色</string>
     <string name="secondary_tertiary_not_set">未设置</string>

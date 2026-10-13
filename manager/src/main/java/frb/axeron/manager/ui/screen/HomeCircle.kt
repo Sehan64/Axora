@@ -6,31 +6,32 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateIntAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.fadeIn
-import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.filled.PowerSettingsNew
@@ -40,7 +41,10 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Security
 import androidx.compose.material.icons.outlined.Shield
-import androidx.compose.material.icons.outlined.OpenInNew
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,10 +52,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -72,7 +72,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -93,9 +92,7 @@ import frb.axeron.api.core.Starter
 import frb.axeron.api.core.AxeronSettings
 import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.AnimatedCounter
-import frb.axeron.manager.ui.component.ModeLabelText
 import frb.axeron.manager.ui.component.PowerDialog
-import frb.axeron.manager.ui.component.TonalCard
 import frb.axeron.manager.ui.component.rememberLoadingDialog
 import frb.axeron.manager.ui.navigation.BottomBarDestination
 import frb.axeron.manager.ui.util.checkNewVersion
@@ -103,6 +100,8 @@ import frb.axeron.manager.ui.util.openUpdateUrl
 import frb.axeron.manager.ui.viewmodel.ActivateViewModel
 import frb.axeron.manager.ui.viewmodel.PluginViewModel
 import frb.axeron.manager.ui.viewmodel.PrivilegeViewModel
+import frb.axeron.manager.ui.theme.HomeTokens
+import frb.axeron.manager.ui.theme.LocalHomeTokens
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -118,16 +117,20 @@ fun HomeCircleScreen(
     privilegeViewModel: PrivilegeViewModel,
     bannerImagePath: String? = null
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
     val prefs = AxeronSettings.getPreferences()
     var showUpdateDialog by remember { mutableStateOf(false) }
     var showPowerDialog by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val loadingDialog = rememberLoadingDialog()
+    val tokens = LocalHomeTokens.current
 
     val status = activateViewModel.activateStatus
     val isRunning = status is ActivateViewModel.ActivateStatus.Running
+    val isUpdating = status is ActivateViewModel.ActivateStatus.Updating
+    val isNeedExtraStep = status is ActivateViewModel.ActivateStatus.NeedExtraStep
     val axeronInfo = activateViewModel.axeronInfo
+    val isShizukuActive = activateViewModel.isShizukuActive
 
     val enterAnimations = remember { mutableStateListOf(false, false, false, false) }
 
@@ -142,14 +145,13 @@ fun HomeCircleScreen(
     }
 
     LaunchedEffect(Unit) {
-        delay(80)
-        enterAnimations[0] = true
-        delay(100)
-        enterAnimations[1] = true
-        delay(100)
-        enterAnimations[2] = true
-        delay(100)
-        enterAnimations[3] = true
+        listOf(tokens.staggerDelayBase, tokens.staggerDelayStep, tokens.staggerDelayStep, tokens.staggerDelayStep)
+            .forEachIndexed { i, d ->
+                launch {
+                    delay(d)
+                    enterAnimations[i] = true
+                }
+            }
     }
 
     if (showUpdateDialog) {
@@ -191,207 +193,216 @@ fun HomeCircleScreen(
     }
 
     Scaffold { innerPadding ->
-        Column(
+        LazyColumn(
             modifier = Modifier
-                .padding(innerPadding)
-                .verticalScroll(rememberScrollState())
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentPadding = PaddingValues(bottom = 80.dp),
+            verticalArrangement = Arrangement.spacedBy(tokens.spacingMd)
         ) {
-            AxoraHeroHeader(
-                status = status,
-                axeronInfo = axeronInfo,
-                isShizukuActive = activateViewModel.isShizukuActive,
-                onPowerClick = { showPowerDialog = true },
-                onActivateClick = { navigator.navigate(ActivateScreenDestination) },
-                visible = enterAnimations[0],
-                bannerImagePath = bannerImagePath
-            )
-
-            if (isRunning) {
-                LaunchedEffect(Unit) { pluginViewModel.fetchModuleList() }
-
-                QuickActionsRow(
-                    visible = enterAnimations[1],
-                    onTerminalClick = { navigator.navigate(QuickShellScreenDestination) },
-                    onReigniteClick = {
-                        scope.launch {
-                            val success = loadingDialog.withLoading {
-                                AxeronPluginService.igniteSuspendService()
-                            }
-                            if (success) pluginViewModel.fetchModuleList()
-                        }
-                    }
-                )
-
-                AnimatedStatCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    label = stringResource(
-                        if (pluginViewModel.plugins.size <= 1) R.string.plugin
-                        else R.string.plugin_plural
+            item {
+                AnimatedVisibility(
+                    visible = enterAnimations[0],
+                    enter = fadeIn(animationSpec = tween(tokens.motionDurationMedium, delayMillis = 0, easing = tokens.motionEasingDecelerate)) + scaleIn(
+                        initialScale = 0.95f,
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f)
                     ),
-                    count = pluginViewModel.plugins.size,
-                    icon = Icons.Outlined.Extension,
-                    onClick = {
-                        navigator.navigate(BottomBarDestination.Plugin.direction) {
-                            popUpTo(NavGraphs.root) { saveState = true }
-                            launchSingleTop = true
-                            restoreState = true
-                        }
-                    },
-                    visible = enterAnimations[1]
-                )
-
-                Spacer(Modifier.height(8.dp))
-
-                if (activateViewModel.isShizukuActive) {
-                    AnimatedStatCard(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp),
-                        label = stringResource(
-                            if (privilegeViewModel.privilegedCount <= 1) R.string.privilege
-                            else R.string.privilege_plural
-                        ),
-                        count = privilegeViewModel.privilegedCount,
-                        icon = Icons.Outlined.Security,
-                        enabled = true,
-                        onClick = {
-                            navigator.navigate(BottomBarDestination.Privilege.direction) {
-                                popUpTo(NavGraphs.root) { saveState = true }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        visible = enterAnimations[1]
+                    exit = fadeOut(animationSpec = tween(tokens.motionDurationShort, easing = tokens.motionEasingAccelerate))
+                ) {
+                    HeroSection(
+                        status = status,
+                        axeronInfo = axeronInfo,
+                        isShizukuActive = isShizukuActive,
+                        onPowerClick = { showPowerDialog = true },
+                        onActivateClick = { navigator.navigate(ActivateScreenDestination) },
+                        bannerImagePath = bannerImagePath,
+                        tokens = tokens
                     )
                 }
-            } else {
-                AnimatedStatCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(start = 16.dp, end = 16.dp, top = 16.dp),
-                    label = stringResource(R.string.plugin_plural),
-                    count = 0,
-                    icon = Icons.Outlined.Extension,
-                    enabled = false,
-                    visible = enterAnimations[1]
-                )
             }
 
-            Spacer(Modifier.height(16.dp))
+            item {
+                AnimatedVisibility(
+                    visible = enterAnimations[1],
+                    enter = fadeIn(animationSpec = tween(tokens.motionDurationMedium, delayMillis = tokens.staggerDelayStep.toInt(), easing = tokens.motionEasingDecelerate)) + scaleIn(
+                        initialScale = 0.92f,
+                        animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f)
+                    )
+                ) {
+                    QuickActionsRow(
+                        enabled = isRunning,
+                        onTerminalClick = { navigator.navigate(QuickShellScreenDestination) },
+                        onReigniteClick = {
+                            scope.launch {
+                                val success = loadingDialog.withLoading {
+                                    AxeronPluginService.igniteSuspendService()
+                                }
+                                if (success) pluginViewModel.fetchModuleList()
+                            }
+                        },
+                        tokens = tokens
+                    )
+                }
+            }
 
-            DeviceInfoSection(
-                axeronInfo = axeronInfo,
-                visible = enterAnimations[2]
-            )
+            item {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(tokens.spacingMd)
+                ) {
+                    AnimatedVisibility(
+                        visible = enterAnimations[2],
+                        enter = fadeIn(animationSpec = tween(tokens.motionDurationMedium, delayMillis = (tokens.staggerDelayStep * 2).toInt(), easing = tokens.motionEasingDecelerate)) + scaleIn(
+                            initialScale = 0.92f,
+                            animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f)
+                        )
+                    ) {
+                        MetricsGrid(
+                            pluginCount = pluginViewModel.plugins.size,
+                            privilegeCount = if (isShizukuActive) privilegeViewModel.privilegedCount else null,
+                            isShizukuActive = isShizukuActive,
+                            isRunning = isRunning,
+                            onPluginClick = {
+                                navigator.navigate(BottomBarDestination.Plugin.direction) {
+                                    popUpTo(NavGraphs.root) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            onPrivilegeClick = {
+                                navigator.navigate(BottomBarDestination.Privilege.direction) {
+                                    popUpTo(NavGraphs.root) { saveState = true }
+                                    launchSingleTop = true
+                                    restoreState = true
+                                }
+                            },
+                            tokens = tokens
+                        )
+                    }
 
-            Spacer(Modifier.height(12.dp))
-
-            LearnMoreSection(visible = enterAnimations[3])
-
-            Spacer(Modifier.height(80.dp))
+                    AnimatedVisibility(
+                        visible = enterAnimations[3],
+                        enter = fadeIn(animationSpec = tween(tokens.motionDurationMedium, delayMillis = (tokens.staggerDelayStep * 3).toInt(), easing = tokens.motionEasingDecelerate)) + scaleIn(
+                            initialScale = 0.92f,
+                            animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f)
+                        )
+                    ) {
+                        DeviceInfoSection(
+                            axeronInfo = axeronInfo,
+                            tokens = tokens
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun AxoraHeroHeader(
+private fun HeroSection(
     status: ActivateViewModel.ActivateStatus,
     axeronInfo: AxeronInfo,
     isShizukuActive: Boolean,
     onPowerClick: () -> Unit,
     onActivateClick: () -> Unit,
-    visible: Boolean,
-    bannerImagePath: String?
+    bannerImagePath: String?,
+    tokens: HomeTokens
 ) {
     val isRunning = status is ActivateViewModel.ActivateStatus.Running
     val isUpdating = status is ActivateViewModel.ActivateStatus.Updating
     val isNeedExtraStep = status is ActivateViewModel.ActivateStatus.NeedExtraStep
 
-    val heroColor = when {
-        isRunning -> MaterialTheme.colorScheme.secondaryContainer
-        isUpdating -> MaterialTheme.colorScheme.primaryContainer
-        isNeedExtraStep -> MaterialTheme.colorScheme.errorContainer
-        else -> MaterialTheme.colorScheme.errorContainer
+    val (statusColor, statusContainer, statusOnContainer) = when {
+        isRunning -> Triple(tokens.statusRunning, tokens.statusRunningContainer, tokens.statusRunningOnContainer)
+        isUpdating -> Triple(tokens.statusUpdating, tokens.statusUpdatingContainer, tokens.statusUpdatingOnContainer)
+        isNeedExtraStep -> Triple(tokens.statusWarning, tokens.statusWarningContainer, tokens.statusWarningOnContainer)
+        else -> Triple(tokens.statusStopped, tokens.statusStoppedContainer, tokens.statusStoppedOnContainer)
     }
 
-    val dotColor = when {
-        isRunning -> MaterialTheme.colorScheme.primary
-        isUpdating -> MaterialTheme.colorScheme.tertiary
-        else -> MaterialTheme.colorScheme.error
-    }
+    val infiniteTransition = rememberInfiniteTransition(label = "statusPulse")
+    val pulseScale by infiniteTransition.animateFloat(
+        initialValue = tokens.pulseMinScale,
+        targetValue = tokens.pulseMaxScale,
+        animationSpec = infiniteRepeatable(
+            animation = tween(tokens.pulseDuration),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse
+        ),
+        label = "pulseScale"
+    )
 
     var bannerSize by remember { mutableStateOf(IntSize.Zero) }
-
     val bannerContext = LocalContext.current
 
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(400)) + slideInVertically(
-            animationSpec = tween(400),
-            initialOffsetY = { -it / 3 }
-        )
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.spacingMd)
+            .onSizeChanged { bannerSize = it },
+        contentAlignment = Alignment.Center
     ) {
-        BoxWithConstraints(
-            modifier = Modifier
-                .fillMaxWidth()
-                .onSizeChanged { bannerSize = it }
-        ) {
-            if (bannerImagePath != null && bannerSize.width > 0 && bannerSize.height > 0) {
-                val bannerRequest = remember(bannerImagePath, bannerSize) {
-                    val maxDim = 1920
-                    ImageRequest.Builder(bannerContext)
-                        .data(File(bannerImagePath))
-                        .size(
-                            minOf(bannerSize.width, maxDim),
-                            minOf(bannerSize.height, maxDim)
-                        )
-                        .build()
-                }
+        if (bannerImagePath != null && bannerSize.width > 0) {
+            val bannerRequest = remember(bannerImagePath, bannerSize) {
+                val maxDim = 1920
+                ImageRequest.Builder(bannerContext)
+                    .data(File(bannerImagePath))
+                    .size(
+                        minOf(bannerSize.width, maxDim),
+                        minOf(bannerSize.height, maxDim)
+                    )
+                    .build()
+            }
 
+            Box(modifier = Modifier.matchParentSize()) {
                 AsyncImage(
                     model = bannerRequest,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .matchParentSize()
-                        .alpha(0.9f)
+                        .clip(RoundedCornerShape(tokens.heroBannerCornerRadius))
                 )
 
                 Box(
                     modifier = Modifier
                         .matchParentSize()
+                        .clip(RoundedCornerShape(tokens.heroBannerCornerRadius))
                         .background(
                             Brush.verticalGradient(
-                                0f to Color.Black.copy(alpha = 0.45f),
-                                0.45f to Color.Black.copy(alpha = 0.28f),
-                                0.65f to Color.Transparent,
-                                1f to MaterialTheme.colorScheme.background
+                                0f to tokens.bannerOverlayStart,
+                                0.45f to tokens.bannerOverlayMid,
+                                0.65f to tokens.bannerOverlayEnd,
+                                1f to tokens.heroSurface
                             )
                         )
                 )
             }
-
+        } else {
             Box(
                 modifier = Modifier
-                    .matchParentSize()
+                    .fillMaxWidth()
+                    .height(tokens.heroMinHeight)
+                    .clip(RoundedCornerShape(tokens.heroBannerCornerRadius))
                     .background(
                         Brush.verticalGradient(
-                            0f to heroColor.copy(alpha = 0.35f),
-                            0.6f to heroColor.copy(alpha = 0.08f),
+                            0f to statusContainer.copy(alpha = 0.35f),
+                            0.6f to statusContainer.copy(alpha = 0.08f),
                             1f to Color.Transparent
                         )
                     )
             )
+        }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 20.dp, bottom = 24.dp, start = 20.dp, end = 20.dp)
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = tokens.heroContentPadding, bottom = tokens.heroContentPadding, start = tokens.heroContentPadding, end = tokens.heroContentPadding)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -400,130 +411,126 @@ private fun AxoraHeroHeader(
                         modifier = Modifier.size(28.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
-                    Spacer(Modifier.width(10.dp))
+                    Spacer(Modifier.width(tokens.spacingSm))
                     Text(
                         text = stringResource(R.string.app_name),
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.weight(1f)
+                        style = MaterialTheme.typography.headlineMedium.copy(
+                            fontSize = tokens.heroAppNameSize,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
-                    if (isRunning) {
-                        IconButton(onClick = onPowerClick) {
-                            Icon(
-                                imageVector = Icons.Default.PowerSettingsNew,
-                                contentDescription = "Power",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                }
+                if (isRunning) {
+                    IconButton(
+                        onClick = onPowerClick,
+                        modifier = Modifier.padding(start = tokens.spacingSm)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PowerSettingsNew,
+                            contentDescription = stringResource(R.string.power_options),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
+            }
 
-                Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(tokens.spacingLg))
 
-                if (isRunning) {
-                    val infiniteTransition = rememberInfiniteTransition(label = "statusGlow")
-                    val glowScale by infiniteTransition.animateFloat(
-                        initialValue = 1f,
-                        targetValue = 1.4f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "glowScale"
-                    )
-                    val glowAlpha by infiniteTransition.animateFloat(
-                        initialValue = 0.3f,
-                        targetValue = 0.7f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200),
-                            repeatMode = RepeatMode.Reverse
-                        ),
-                        label = "glowAlpha"
-                    )
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Box(
-                                modifier = Modifier
-                                    .size(18.dp)
-                                    .scale(glowScale)
-                                    .background(dotColor.copy(alpha = glowAlpha), CircleShape)
-                            )
-                            Box(
-                                modifier = Modifier
-                                    .size(10.dp)
-                                    .background(dotColor, CircleShape)
-                            )
-                        }
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = stringResource(R.string.home_running),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold
+            if (isRunning) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(tokens.spacingSm)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Box(
+                            modifier = Modifier
+                                .size(18.dp)
+                                .scale(pulseScale)
+                                .background(statusColor.copy(alpha = 0.3f), CircleShape)
                         )
-                        Spacer(Modifier.width(10.dp))
-                        ModeLabelText(
-                            label = axeronInfo.serverInfo.getMode().label,
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            color = MaterialTheme.colorScheme.onPrimary
-                        )
-                    }
-
-                    Spacer(Modifier.height(8.dp))
-
-                    Text(
-                        text = "Version: ${axeronInfo.getVersionCode()}  |  PID: ${axeronInfo.serverInfo.pid}",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Spacer(Modifier.height(4.dp))
-
-                    UptimeText(axeronInfo = axeronInfo)
-                } else {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(
                             modifier = Modifier
                                 .size(10.dp)
-                                .background(dotColor, CircleShape)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text(
-                            text = when {
-                                isUpdating -> stringResource(R.string.updating)
-                                isNeedExtraStep -> stringResource(R.string.home_need_fix)
-                                else -> stringResource(R.string.home_not_running)
-                            },
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold
+                                .background(statusColor, CircleShape)
                         )
                     }
+                    Text(
+                        text = stringResource(R.string.home_running),
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = tokens.heroStatusSize,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    )
+                }
 
-                    Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(tokens.spacingXs))
 
+                Text(
+                    text = "v${axeronInfo.getVersionCode()} · PID ${axeronInfo.serverInfo.pid} · ${axeronInfo.serverInfo.getMode().label}",
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = tokens.heroMetaSize
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                UptimeText(axeronInfo = axeronInfo, tokens = tokens)
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(tokens.spacingSm)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(10.dp)
+                            .background(statusColor, CircleShape)
+                    )
                     Text(
                         text = when {
-                            isUpdating -> stringResource(R.string.server_updating_version,
-                                axeronInfo.getVersionCode(),
-                                AxeronApiConstant.server.VERSION_CODE)
-                            isNeedExtraStep -> stringResource(R.string.home_need_fix_msg)
-                            else -> stringResource(R.string.home_click_to_install)
+                            isUpdating -> stringResource(R.string.updating)
+                            isNeedExtraStep -> stringResource(R.string.home_need_fix)
+                            else -> stringResource(R.string.home_not_running)
                         },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        style = MaterialTheme.typography.titleLarge.copy(
+                            fontSize = tokens.heroStatusSize,
+                            fontWeight = FontWeight.SemiBold
+                        )
                     )
+                }
 
-                    if (!isUpdating && !isNeedExtraStep) {
-                        Spacer(Modifier.height(16.dp))
-                        Button(
-                            onClick = onActivateClick,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text(text = stringResource(R.string.activate))
-                        }
+                Spacer(Modifier.height(tokens.spacingXs))
+
+                Text(
+                    text = when {
+                        isUpdating -> stringResource(R.string.server_updating_version,
+                            axeronInfo.getVersionCode(),
+                            AxeronApiConstant.server.VERSION_CODE)
+                        isNeedExtraStep -> stringResource(R.string.home_need_fix_msg)
+                        else -> stringResource(R.string.home_click_to_install)
+                    },
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = tokens.heroMetaSize
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                if (!isUpdating && !isNeedExtraStep) {
+                    Spacer(Modifier.height(tokens.spacingMd))
+                    Button(
+                        onClick = onActivateClick,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary
+                        ),
+                        shape = RoundedCornerShape(tokens.chipCornerRadius)
+                    ) {
+                        Text(text = stringResource(R.string.activate))
                     }
                 }
             }
@@ -532,12 +539,15 @@ private fun AxoraHeroHeader(
 }
 
 @Composable
-private fun UptimeText(axeronInfo: AxeronInfo) {
+private fun UptimeText(axeronInfo: AxeronInfo, tokens: HomeTokens) {
     var time by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(Unit) {
+    val starting = axeronInfo.serverInfo.starting
+
+    LaunchedEffect(starting) {
+        if (starting <= 0L) return@LaunchedEffect
         while (true) {
-            time = SystemClock.elapsedRealtime() - axeronInfo.serverInfo.starting
+            time = SystemClock.elapsedRealtime() - starting
             delay(1000)
         }
     }
@@ -553,211 +563,318 @@ private fun UptimeText(axeronInfo: AxeronInfo) {
     }
 
     Text(
-        text = formatUptime(time),
-        style = MaterialTheme.typography.bodyMedium,
+        text = if (starting <= 0L) "" else formatUptime(time),
+        style = MaterialTheme.typography.bodyMedium.copy(
+            fontSize = tokens.heroMetaSize
+        ),
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 
 @Composable
 private fun QuickActionsRow(
-    visible: Boolean,
+    enabled: Boolean,
     onTerminalClick: () -> Unit,
-    onReigniteClick: () -> Unit
+    onReigniteClick: () -> Unit,
+    tokens: HomeTokens
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(350)) + slideInVertically(
-            animationSpec = tween(350),
-            initialOffsetY = { it / 2 }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.spacingMd),
+        horizontalArrangement = Arrangement.spacedBy(tokens.spacingSm)
+    ) {
+        ActionChip(
+            icon = Icons.Filled.Terminal,
+            label = stringResource(R.string.quick_shell),
+            enabled = enabled,
+            onClick = onTerminalClick,
+            tokens = tokens,
+            modifier = Modifier.weight(1f)
         )
+        ActionChip(
+            icon = Icons.Default.LocalFireDepartment,
+            label = stringResource(R.string.ignite),
+            enabled = enabled,
+            onClick = onReigniteClick,
+            tokens = tokens,
+            modifier = Modifier.weight(1f)
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ActionChip(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    tokens: HomeTokens,
+    modifier: Modifier = Modifier
+) {
+    val alpha = if (enabled) 1f else 0.5f
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(tokens.chipCornerRadius),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        modifier = modifier
+            .alpha(alpha)
+            .height(tokens.chipHeight)
     ) {
         Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 16.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                .fillMaxSize()
+                .padding(horizontal = tokens.spacingSm),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
         ) {
-            ActionChip(
-                icon = Icons.Filled.Terminal,
-                label = stringResource(R.string.quick_shell),
-                onClick = onTerminalClick
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(tokens.chipIconSize),
+                tint = MaterialTheme.colorScheme.onSurface
             )
-            ActionChip(
-                icon = Icons.Default.LocalFireDepartment,
-                label = stringResource(R.string.ignite),
-                onClick = onReigniteClick
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
 @Composable
-private fun ActionChip(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit
+private fun MetricsGrid(
+    pluginCount: Int,
+    privilegeCount: Int?,
+    isShizukuActive: Boolean,
+    isRunning: Boolean,
+    onPluginClick: () -> Unit,
+    onPrivilegeClick: () -> Unit,
+    tokens: HomeTokens
 ) {
-    FilledTonalButton(
-        onClick = onClick,
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.filledTonalButtonColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-        ),
-        content = {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(6.dp))
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelLarge
+    val pluginLabel = stringResource(R.string.plugin)
+    val privilegeLabel = stringResource(R.string.privilege)
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(80.dp)
+            .padding(horizontal = tokens.spacingMd),
+        horizontalArrangement = Arrangement.spacedBy(tokens.spacingSm)
+    ) {
+        MetricCard(
+            item = MetricItem(
+                label = pluginLabel,
+                count = pluginCount,
+                icon = Icons.Outlined.Extension,
+                enabled = isRunning,
+                onClick = if (isRunning) onPluginClick else null
+            ),
+            tokens = tokens,
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight()
+        )
+        if (isShizukuActive) {
+            MetricCard(
+                item = MetricItem(
+                    label = privilegeLabel,
+                    count = privilegeCount ?: 0,
+                    icon = Icons.Outlined.Security,
+                    enabled = isRunning,
+                    onClick = if (isRunning) onPrivilegeClick else null
+                ),
+                tokens = tokens,
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
             )
         }
-    )
+    }
 }
 
+private data class MetricItem(
+    val label: String,
+    val count: Int,
+    val icon: ImageVector,
+    val enabled: Boolean,
+    val onClick: (() -> Unit)?
+)
+
 @Composable
-private fun AnimatedStatCard(
-    modifier: Modifier = Modifier,
-    label: String,
-    count: Int,
-    icon: ImageVector,
-    enabled: Boolean = true,
-    onClick: (() -> Unit)? = null,
-    visible: Boolean
+private fun MetricCard(
+    item: MetricItem,
+    tokens: HomeTokens,
+    modifier: Modifier = Modifier
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(400)) + slideInVertically(
-            animationSpec = tween(400),
-            initialOffsetY = { it / 2 }
-        )
-    ) {
-        val alpha = if (enabled) 1f else 0.5f
-        TonalCard(
-            modifier = modifier.then(
-                if (onClick != null && enabled) Modifier.clip(RoundedCornerShape(20.dp)).clickable { onClick() }
-                else Modifier
-            ),
-            containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(2.dp).copy(alpha = alpha)
+    val alpha = if (item.enabled) 1f else 0.5f
+    val containerColor = tokens.cardSurface.copy(alpha = alpha)
+    val contentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha)
+    val iconColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = alpha)
+    val shape = RoundedCornerShape(tokens.cardCornerRadius)
+    val colors = CardDefaults.cardColors(
+        containerColor = containerColor,
+        contentColor = contentColor
+    )
+    val elevation = CardDefaults.cardElevation(
+        defaultElevation = 1.dp,
+        hoveredElevation = 2.dp,
+        pressedElevation = 0.dp
+    )
+
+    val content: @Composable ColumnScope.() -> Unit = {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = tokens.cardPadding, vertical = tokens.spacingSm),
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 18.dp)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(tokens.spacingSm)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Text(
-                        text = label,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (enabled) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-                Spacer(Modifier.height(12.dp))
-                AnimatedCounter(
-                    count = count,
-                    style = MaterialTheme.typography.displaySmall.copy(
-                        fontWeight = FontWeight.Bold,
-                        color = if (enabled) MaterialTheme.colorScheme.onSurface
-                        else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
+                Icon(
+                    imageVector = item.icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(tokens.cardIconSize),
+                    tint = iconColor
+                )
+                Text(
+                    text = item.label,
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = tokens.cardLabelSize
+                    ),
+                    color = contentColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
                 )
             }
+            Spacer(Modifier.height(tokens.spacingXs))
+            AnimatedCounter(
+                count = item.count,
+                style = MaterialTheme.typography.displaySmall.copy(
+                    fontWeight = FontWeight.Bold,
+                    fontSize = tokens.cardCountSize,
+                    lineHeight = tokens.cardCountSize * 1.1f,
+                    color = contentColor
+                )
+            )
         }
+    }
+
+    if (item.onClick != null && item.enabled) {
+        Card(
+            onClick = item.onClick,
+            modifier = modifier,
+            shape = shape,
+            colors = colors,
+            elevation = elevation,
+            content = content
+        )
+    } else {
+        Card(
+            modifier = modifier,
+            shape = shape,
+            colors = colors,
+            elevation = elevation,
+            content = content
+        )
     }
 }
 
 @Composable
 private fun DeviceInfoSection(
     axeronInfo: AxeronInfo,
-    visible: Boolean
+    tokens: HomeTokens
 ) {
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(400)) + slideInVertically(
-            animationSpec = tween(400),
-            initialOffsetY = { it / 3 }
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = tokens.spacingMd),
+        colors = CardDefaults.cardColors(
+            containerColor = tokens.cardSurface,
+            contentColor = MaterialTheme.colorScheme.onSurface
+        ),
+        shape = RoundedCornerShape(tokens.infoSectionCornerRadius),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = 0.dp,
+            hoveredElevation = 1.dp,
+            pressedElevation = 0.dp
         )
     ) {
-        Surface(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 0.dp
+                .padding(horizontal = tokens.cardPadding, vertical = tokens.cardPadding)
         ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 20.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.axeron_environment),
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+            Text(
+                text = stringResource(R.string.axeron_environment),
+                style = MaterialTheme.typography.titleSmall.copy(
+                    fontSize = tokens.infoLabelSize,
                     fontWeight = FontWeight.SemiBold
-                )
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
-                Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(tokens.infoRowSpacing))
 
-                InfoRow(
-                    icon = Icons.Outlined.Android,
-                    label = stringResource(R.string.android_version),
-                    value = "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})"
+            InfoRow(
+                icon = Icons.Outlined.Android,
+                label = stringResource(R.string.android_version),
+                value = "${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})",
+                tokens = tokens
+            )
+            Spacer(Modifier.height(tokens.infoRowSpacing))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.Top
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Memory,
+                    contentDescription = null,
+                    modifier = Modifier.size(tokens.infoIconSize),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(14.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Memory,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Text(
-                        text = stringResource(R.string.abi_supported),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Build.SUPPORTED_ABIS.forEach { abi ->
-                            Text(
-                                text = abi,
-                                style = MaterialTheme.typography.bodyMedium.copy(
-                                    fontWeight = FontWeight.Medium
-                                ),
-                                color = MaterialTheme.colorScheme.onSurface,
-                            )
-                        }
+                Spacer(Modifier.width(tokens.spacingMd))
+                Text(
+                    text = stringResource(R.string.abi_supported),
+                    style = MaterialTheme.typography.bodyMedium.copy(
+                        fontSize = tokens.infoValueSize
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(Modifier.width(tokens.spacingSm))
+                Column {
+                    Build.SUPPORTED_ABIS.forEach { abi ->
+                        Text(
+                            text = abi,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                fontSize = tokens.infoValueSize
+                            ),
+                            color = MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
-                Spacer(Modifier.height(14.dp))
-                InfoRow(
-                    icon = Icons.Outlined.Shield,
-                    label = stringResource(R.string.selinux_context),
-                    value = axeronInfo.serverInfo.selinuxContext
-                )
             }
+            Spacer(Modifier.height(tokens.infoRowSpacing))
+
+            InfoRow(
+                icon = Icons.Outlined.Shield,
+                label = stringResource(R.string.selinux_context),
+                value = axeronInfo.serverInfo.selinuxContext,
+                tokens = tokens
+            )
         }
     }
 }
@@ -766,85 +883,37 @@ private fun DeviceInfoSection(
 private fun InfoRow(
     icon: ImageVector,
     label: String,
-    value: String
+    value: String,
+    tokens: HomeTokens
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(tokens.spacingMd)
     ) {
         Icon(
             imageVector = icon,
             contentDescription = null,
-            modifier = Modifier.size(20.dp),
+            modifier = Modifier.size(tokens.infoIconSize),
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        Spacer(Modifier.width(14.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.bodyMedium,
+            style = MaterialTheme.typography.bodyMedium.copy(
+                fontSize = tokens.infoValueSize
+            ),
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f)
         )
-        Spacer(Modifier.width(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.bodyMedium.copy(
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Medium,
+                fontSize = tokens.infoValueSize
             ),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-    }
-}
-
-@Composable
-private fun LearnMoreSection(visible: Boolean) {
-    val uriHandler = LocalUriHandler.current
-
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(animationSpec = tween(400)) + slideInVertically(
-            animationSpec = tween(400),
-            initialOffsetY = { it / 3 }
-        )
-    ) {
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .clickable { uriHandler.openUri("https://fahrez182.github.io/AxManager") },
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow,
-            tonalElevation = 0.dp
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.learn_more),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.learn_more_msg),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Icon(
-                    imageVector = Icons.Outlined.OpenInNew,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        }
     }
 }

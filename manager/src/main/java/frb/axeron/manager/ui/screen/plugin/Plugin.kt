@@ -116,6 +116,7 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
                 when {
                     isScrollingDown && !bottomBarHidden.value -> bottomBarHidden.value = true
                     isScrollingUp && bottomBarHidden.value -> bottomBarHidden.value = false
+                    (currIndex == 0 && currOffset == 0) && bottomBarHidden.value -> bottomBarHidden.value = false
                 }
 
                 lastIndex = currIndex
@@ -165,8 +166,12 @@ fun PluginScreen(navigator: DestinationsNavigator, viewModelGlobal: ViewModelGlo
             )
         },
         floatingActionButton = {
+            val bottomBarHidden = LocalBottomBarHidden.current
             Box(
-                modifier = Modifier.padding(bottom = 26.dp, end = 16.dp)
+                modifier = Modifier.padding(
+                    bottom = if (bottomBarHidden.value) 26.dp else 96.dp,
+                    end = 16.dp
+                )
             ) {
                 AnimatedVisibility(
                     visible = showFab,
@@ -427,6 +432,8 @@ fun ItemPreview() {
         viewModel = viewModel(),
         plugin = dummyPlugin,
         updateUrl = "https://example.com/update",
+        useBanner = true,
+        bannerData = null,
         onUninstall = {},
         onRestore = {},
         onCheckChanged = {},

@@ -78,6 +78,9 @@ open class AxeronService :
     Service<AxeronUserServiceManager, AxeronClientManager, AxeronConfigManager>() {
 
     companion object {
+        private const val IDLE_RELEASE_DELAY_MS = 30_000L
+        private const val IDLE_RECHECK_MS = 30_000L
+
         @JvmStatic
         fun main(args: Array<String>) {
             DdmHandleAppName.setAppName("axeron_server", 0)
@@ -150,8 +153,8 @@ open class AxeronService :
         }
 
         @JvmStatic
-        fun sendBinderToManager(binder: IBinder, userId: Int) {
-            sendBinderToUserApp(binder, MANAGER_APPLICATION_ID, userId)
+        fun sendBinderToManager(binder: IBinder, userId: Int): Boolean {
+            return sendBinderToUserApp(binder, MANAGER_APPLICATION_ID, userId)
         }
 
         @JvmStatic
@@ -159,12 +162,30 @@ open class AxeronService :
             sendBinderToUserApp(binder, SHIZUKU_MANAGER_APPLICATION_ID, userId)
         }
 
+        /**
+         * Deliver [binder] to [packageName]'s "sendBinder" provider.
+         *
+         * Returns true only when the provider call actually went through. Callers use the
+         * result to decide whether to record the delivery as done - marking a uid/pid as
+         * "already served" after a failed dispatch is what left a live server unable to
+         * reconnect the manager after a force-stop.
+         */
         @JvmStatic
-        fun sendBinderToUserApp(binder: IBinder, packageName: String, userId: Int) {
-            sendBinderToUserApp(binder, packageName, userId, true)
-        }
+        fun sendBinderToUserApp(binder: IBinder, packageName: String, userId: Int): Boolean {
+            try {
+                val appInfo = PackageManagerApis.getApplicationInfoNoThrow(packageName, 0, userId)
+                if (appInfo != null && appInfo.flags and ApplicationInfo.FLAG_STOPPED != 0) {
+                    LOGGER.d(
+                        "skip sending binder to force-stopped %s in user %d",
+                        packageName,
+                        userId
+                    )
+                    return false
+                }
+            } catch (it: Throwable) {
+                LOGGER.w(it, "check FLAG_STOPPED for %s in user %d", packageName, userId)
+            }
 
-        fun sendBinderToUserApp(binder: IBinder, packageName: String, userId: Int, retry: Boolean) {
             try {
                 DeviceIdleControllerApis.addPowerSaveTempWhitelistApp(
                     packageName, 30 * 1000, userId,
@@ -197,22 +218,11 @@ open class AxeronService :
                     ActivityManagerApis.getContentProviderExternal(name, userId, token, name)
                 if (provider == null) {
                     LOGGER.e("provider is null %s %d", name, userId)
-                    return
+                    return false
                 }
                 if (!provider.asBinder().pingBinder()) {
                     LOGGER.e("provider is dead %s %d", name, userId)
-
-                    if (retry) {
-                        ActivityManagerApis.forceStopPackageNoThrow(packageName, userId)
-                        LOGGER.e("kill %s in user %d and try again", packageName, userId)
-                        Thread.sleep(1000)
-                        sendBinderToUserApp(binder, packageName, userId, false)
-                    }
-                    return
-                }
-
-                if (!retry) {
-                    LOGGER.e("retry works")
+                    return false
                 }
 
                 val extra = Bundle().apply {
@@ -220,8 +230,22 @@ open class AxeronService :
                 }
                 IContentProviderCompat.call(provider, null, null, name, "sendBinder", null, extra)
                 LOGGER.i("send binder to user app %s in user %d", packageName, userId)
+                return true
             } catch (it: Throwable) {
+                // Walk the cause chain: the useful information is usually not on the
+                // outermost throwable, because the failure is often a secondary symptom.
                 LOGGER.e(it, "failed send binder to user app %s in user %d", packageName, userId)
+                var cause = it.cause
+                var depth = 0
+                while (cause != null && depth < 8) {
+                    LOGGER.e("  caused by [%d] %s: %s", depth, cause.javaClass.name, cause.message)
+                    cause.stackTrace.take(6).forEach { frame ->
+                        LOGGER.e("    at %s", frame)
+                    }
+                    cause = cause.cause
+                    depth++
+                }
+                return false
             } finally {
                 try {
                     ActivityManagerApis.removeContentProviderExternal(name, token)
@@ -304,6 +328,30 @@ open class AxeronService :
         }
     }
 
+    @Volatile
+    private var wakeHeld = false
+
+    private val idleWakelockRunnable: Runnable = Runnable {
+        if (ProcessPoolManager.getInstance().isAnyProcessAlive()) {
+            mainHandler.postDelayed(idleWakelockRunnable, IDLE_RECHECK_MS)
+        } else if (wakeHeld) {
+            wakeHeld = false
+            release()
+            LOGGER.i("Idle wakelock released (no live child process)")
+        }
+    }
+
+    private fun ensureWakelockActive() {
+        if (!wakeHeld) {
+            wakeHeld = true
+            acquire()
+        } else {
+            LOGGER.v("Wakelock already held")
+        }
+        mainHandler.removeCallbacks(idleWakelockRunnable)
+        mainHandler.postDelayed(idleWakelockRunnable, IDLE_RELEASE_DELAY_MS)
+    }
+
     override fun onCreateUserServiceManager(): AxeronUserServiceManager {
         return AxeronUserServiceManager(getEnvironment(TYPE_ENV)?.getEnv())
     }
@@ -318,8 +366,10 @@ open class AxeronService :
 
     @Synchronized
     fun checkCaller(callingUid: Int): Boolean {
-        val managerAppUid: Int =
-            getManagerApplicationInfo()?.uid ?: exitProcess(ServerConstants.MANAGER_APP_NOT_FOUND)
+        val managerAppUid: Int = getManagerApplicationInfo()?.uid ?: run {
+            LOGGER.w("manager app not found, denying caller uid=%d", callingUid)
+            return false
+        }
 
         val shizukuManagerUid: Int = getShizukuManagerApplicationInfo()?.uid ?: managerAppUid
         return UserHandleCompat.getAppId(callingUid) == managerAppUid || UserHandleCompat.getAppId(
@@ -370,15 +420,41 @@ open class AxeronService :
 
         if (axCompanion.exists()) {
             shizuku = ShizukuServiceIntercept(this)
-            BinderSender.register(asInterface(this))
         }
+
+        // Register unconditionally, not just when the Shizuku companion is enabled. This
+        // installs the process/uid observers that re-push the binder whenever the manager
+        // process comes back. Gating it on the companion meant that in ADB non-root mode the
+        // server pushed the binder once at startup and then never again, so a force-stop or an
+        // app update left a live server that the manager could never reconnect to.
+        // sendBinder() has a fast-path for shizukuService == null when the uid is the manager's.
+        BinderSender.register(asInterface(this))
 
         mainHandler.post {
             sendBinderToClient()
             sendBinderToManager()
         }
 
-        acquire()
+        ensureWakelockActive()
+
+        // Backup binder delivery. The observer-driven push is best-effort and is not always
+        // re-triggered after the manager is force-stopped, so the manager can also ask us for
+        // the binder directly. This needs a Context, and a server spawned by app_process has
+        // none - getContext() has to bootstrap an ActivityThread first. That is heavy and can
+        // throw, so it is deferred onto its own thread and fully guarded: the primary fix is
+        // the dedup pruning in BinderSender, and this must never be able to take the server
+        // down if the bootstrap does not work out.
+        Thread(Runnable { registerBinderRequestReceiver() }, "axeron-binder-request").apply {
+            isDaemon = true
+        }.start()
+    }
+
+    private fun registerBinderRequestReceiver() {
+        runCatching {
+            BinderSender.registerBinderRequestReceiver(getContext(), asInterface(this))
+        }.onFailure {
+            LOGGER.w(it, "on-demand binder request receiver unavailable")
+        }
     }
 
     fun sendBinderToClient() {
@@ -522,6 +598,8 @@ open class AxeronService :
 
         pool.registerProcess(process)
 
+        ensureWakelockActive()
+
         val clientRecord = clientManager.findClient(getCallingUid(), getCallingPid())
         val token = clientRecord?.client?.asBinder()
 
@@ -553,6 +631,9 @@ open class AxeronService :
         }
 
         pool.registerProcess(process, 0)
+
+        ensureWakelockActive()
+
         return RemoteProcessHolder(process, null)
     }
 
@@ -805,6 +886,8 @@ open class AxeronService :
     }
 
     override fun exit() {
+        wakeHeld = false
+        mainHandler.removeCallbacks(idleWakelockRunnable)
         release()
         super.exit()
     }

@@ -1,6 +1,5 @@
 package frb.axeron.manager.ui.screen.plugin
 
-import android.content.Context
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -62,7 +61,6 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.ramcosta.composedestinations.generated.destinations.ExecutePluginActionScreenDestination
 import com.ramcosta.composedestinations.navigation.DestinationsNavigator
-import frb.axeron.api.Axeron
 import frb.axeron.api.AxeronPluginService
 import frb.axeron.manager.R
 import frb.axeron.manager.ui.component.ConfirmResult
@@ -77,10 +75,7 @@ import frb.axeron.manager.ui.component.rememberLoadingDialog
 import frb.axeron.manager.ui.viewmodel.PluginViewModel
 import frb.axeron.manager.ui.viewmodel.SettingsViewModel
 import frb.axeron.server.PluginInfo
-import frb.axeron.shared.AxeronApiConstant
-import frb.axeron.shared.PathHelper
 import kotlinx.coroutines.launch
-import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -139,6 +134,8 @@ fun PluginItem(
     viewModel: PluginViewModel,
     plugin: PluginInfo,
     updateUrl: String,
+    useBanner: Boolean,
+    bannerData: ByteArray?,
     onUninstall: (PluginInfo) -> Unit,
     onRestore: (PluginInfo) -> Unit,
     onCheckChanged: (Boolean) -> Unit,
@@ -146,6 +143,7 @@ fun PluginItem(
     onClick: (PluginInfo) -> Unit,
     expanded: Boolean,
     onExpandToggle: () -> Unit,
+    onChangelog: ((String) -> Unit)? = null,
 ) {
     var showExtraSetDialog by remember { mutableStateOf(false) }
 
@@ -168,10 +166,6 @@ fun PluginItem(
             modifier = Modifier
                 .fillMaxWidth()
         ) {
-            val context = LocalContext.current
-            val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-            val useBanner = prefs.getBoolean("use_banner", true)
-
             if (useBanner && plugin.prop.banner.isNotEmpty()) {
                 val colorScheme = MaterialTheme.colorScheme
                 val context = LocalContext.current
@@ -201,26 +195,6 @@ fun PluginItem(
                             alpha = 0.18f
                         )
                     } else {
-                        val bannerData = remember(plugin.prop.id) {
-                            try {
-                                val path = File(
-                                    PathHelper.getWorkingPath(
-                                        Axeron.getAxeronInfo().isRoot(),
-                                        AxeronApiConstant.folder.PARENT_PLUGIN
-                                    ),
-                                    plugin.prop.id
-                                )
-                                val bannerFile = File(path, plugin.prop.banner)
-                                val file =
-                                    Axeron.newFileService()
-                                        .setFileInputStream(bannerFile.absolutePath)
-                                file?.use {
-                                    it.readBytes()
-                                }
-                            } catch (_: Exception) {
-                                null
-                            }
-                        }
                         if (bannerData != null) {
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
@@ -265,8 +239,6 @@ fun PluginItem(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        val confirmDialog = rememberConfirmDialog()
-                        val reigniteLoading = rememberLoadingDialog()
                         val scope = rememberCoroutineScope()
 
                         val pluginId = stringResource(R.string.plugin_id)
@@ -294,6 +266,8 @@ fun PluginItem(
                                     }
                                 )
                                 if (plugin.update) {
+                                    val confirmDialog = rememberConfirmDialog()
+                                    val reigniteLoading = rememberLoadingDialog()
                                     val title = stringResource(R.string.what_is_ignite)
                                     val content = stringResource(R.string.what_is_ignite_msg)
                                     val confirm = stringResource(R.string.understand)
