@@ -30,6 +30,51 @@ import java.util.concurrent.atomic.AtomicBoolean
 object AdbStarter {
     private const val TAG = "AdbStarter"
 
+    /**
+     * The last port we actually managed to talk to adbd on.
+     *
+     * `AdbEnvironment.getAdbTcpPort()` reads a system property, which is unset in the default
+     * mDNS pairing mode - the real port is only discovered at runtime. Caching the port that
+     * worked lets later operations (notably the liveness probe) reconnect without repeating the
+     * whole mDNS handshake.
+     */
+    @Volatile
+    private var lastConnectedPort: Int = 0
+
+    /**
+     * Single source of truth for "which port is adbd on".
+     *
+     * The liveness probe and the restart command must agree on this, otherwise we can prove the
+     * server is dead on one port and then send the restart command to another, silently doing
+     * nothing.
+     *
+     * A port we have *already connected to* wins, because it is the only one known to be real.
+     * That matters because `AxeronSettings.getTcpPort()` quietly falls back to 5555 when it
+     * cannot read the system property (`service.adb.tcp.port`), so preferring the configured
+     * value would have us probe a port we invented.
+     */
+    fun resolvePort(): Int {
+        if (lastConnectedPort > 0) return lastConnectedPort
+
+        val discovered = runCatching {
+            AdbEnvironment.getAdbTcpPort()
+        }.getOrDefault(0)
+        if (discovered > 0) return discovered
+
+        val configured = runCatching {
+            AxeronSettings.getTcpPort()
+        }.getOrDefault(0)
+
+        if (configured > 0) {
+            Log.w(
+                TAG,
+                "no confirmed adb port; falling back to $configured (guessing - " +
+                        "the adb tcp port could not be read)"
+            )
+        }
+        return configured
+    }
+
     @RequiresApi(Build.VERSION_CODES.R)
     suspend fun startAdbWireless(
         context: Context, result: (AdbStateInfo) -> Unit = {}
@@ -234,6 +279,7 @@ object AdbStarter {
                 TAG,
                 "AdbClient success"
             )
+            lastConnectedPort = activePort
             AxeronSettings.setLastLaunchMode(AxeronSettings.LaunchMethod.ADB)
             result(AdbStateInfo.Success(context.getString(R.string.adb_client_connected)))
         }.onFailure {

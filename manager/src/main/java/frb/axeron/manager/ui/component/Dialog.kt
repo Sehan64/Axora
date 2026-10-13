@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.wrapContentHeight
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -464,7 +463,12 @@ private fun LoadingDialog() {
         properties = DialogProperties(dismissOnClickOutside = false, dismissOnBackPress = false)
     ) {
         Surface(
-            modifier = Modifier.size(100.dp), shape = RoundedCornerShape(8.dp)
+            // Theme-driven corner radius like every other container; this was hardcoded to 8dp,
+            // which ignored the Appearance corner-style setting and looked visibly boxier.
+            modifier = Modifier.size(100.dp),
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            tonalElevation = 6.dp
         ) {
             Box(
                 contentAlignment = Alignment.Center,
@@ -515,44 +519,59 @@ private fun ConfirmDialog(
                 )
             }
         },
-        confirmButton = {
-            visuals.confirm?.let {
-                TextButton(onClick = {
-                    scope.launch {
-                        sheetState.hide()
-                        confirm()
-                    }
-                }) {
-                    Text(text = it)
+        // Each action slot is null when its label is absent, rather than a lambda that renders
+        // nothing. The shared button row keys its 8dp spacing off the slots being non-null, so an
+        // always-present-but-empty lambda would pad the row around a button that isn't there.
+        //
+        // Each slot is built through a helper returning the composable function type explicitly.
+        // Chaining `.takeIf { }` onto a @Composable lambda does not typecheck: takeIf is a plain
+        // stdlib function, so the lambda's @Composable receiver is lost and it is inferred as
+        // Function0<Unit?>.
+        confirmButton = actionSlot(visuals.confirm) { label ->
+            TextButton(onClick = {
+                scope.launch {
+                    sheetState.hide()
+                    confirm()
                 }
+            }) {
+                Text(text = label)
             }
         },
-        dismissButton = {
-            visuals.dismiss?.let {
-                TextButton(onClick = {
-                    scope.launch {
-                        sheetState.hide()
-                        dismiss()
-                    }
-
-                }) {
-                    Text(text = it)
+        dismissButton = actionSlot(visuals.dismiss) { label ->
+            TextButton(onClick = {
+                scope.launch {
+                    sheetState.hide()
+                    dismiss()
                 }
+            }) {
+                Text(text = label)
             }
         },
-        neutralButton = {
-            visuals.neutral?.let {
-                TextButton(onClick = {
-                    scope.launch {
-                        sheetState.hide()
-                        neutral()
-                    }
-                }) {
-                    Text(text = it)
+        neutralButton = actionSlot(visuals.neutral) { label ->
+            TextButton(onClick = {
+                scope.launch {
+                    sheetState.hide()
+                    neutral()
                 }
+            }) {
+                Text(text = label)
             }
         }
     )
+}
+
+/**
+ * Builds an action slot, or returns null when [label] is absent.
+ *
+ * The explicit `@Composable () -> Unit` return type is what lets the composable lambda be
+ * returned from a non-composable context without losing its receiver.
+ */
+private fun actionSlot(
+    label: String?,
+    content: @Composable (String) -> Unit
+): (@Composable () -> Unit)? {
+    if (label == null) return null
+    return { content(label) }
 }
 
 @Composable

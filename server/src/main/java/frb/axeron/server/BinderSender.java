@@ -6,9 +6,16 @@ import static android.app.ActivityManagerHidden.UID_OBSERVER_GONE;
 import static android.app.ActivityManagerHidden.UID_OBSERVER_IDLE;
 
 import android.app.ActivityManagerHidden;
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.os.Binder;
 import android.os.Build;
+import android.os.IBinder;
+import android.os.Parcel;
 import android.os.RemoteException;
 import android.text.TextUtils;
 
@@ -39,6 +46,7 @@ public class BinderSender {
 
     private static IAxeronService axeronService;
     private static boolean registered = false;
+    private static BroadcastReceiver binderRequestReceiver;
 
     private static final Map<Integer, List<String>> UID_PACKAGE_CACHE = new ConcurrentHashMap<>();
     private static final Set<String> SENT_BINDERS = ConcurrentHashMap.newKeySet();
@@ -47,9 +55,42 @@ public class BinderSender {
         return UID_PACKAGE_CACHE.computeIfAbsent(uid, PackageManagerApis::getPackagesForUidNoThrow);
     }
 
+    /**
+     * Allow this uid/pid combination to be served again.
+     *
+     * The "already sent" set is a de-duplication cache, not a record of permanently handled
+     * uids. Without pruning it turned into exactly that: the manager app was served the binder
+     * on its first launch and never again, because a force-stop restarts the app process while
+     * keeping the same uid. {@code onProcessDied} is the reliable hook - it is a per-process
+     * callback, so it fires even on builds that skip uid-level notifications.
+     */
+    private static void pruneSentBinders(int uid, int pid) {
+        SENT_BINDERS.remove(uid + ":" + pid);
+        // The uid-level observers always use pid -1, so that key has to go too. Without this,
+        // relaunching the app would hit the duplicate check and never be served.
+        SENT_BINDERS.remove(uid + ":-1");
+    }
+
+    /** Drop every cached send for a uid that no longer has any processes. */
+    private static void pruneSentBindersForUid(int uid) {
+        String prefix = uid + ":";
+        SENT_BINDERS.removeIf(key -> key.startsWith(prefix));
+    }
+
     private static void sendBinder(int uid, int pid) throws RemoteException {
         String key = uid + ":" + pid;
-        if (!SENT_BINDERS.add(key)) {
+        // Cheap duplicate check only - deliberately NOT inserting here.
+        //
+        // This used to be `if (!SENT_BINDERS.add(key)) return;`, which marked the uid as
+        // "already served" *before* we knew whether a send could even happen: the code below
+        // still bailed out on an empty package list, a missing Shizuku service, or a denied
+        // permission. Worse, the key was never removed, so the entry survived for the lifetime
+        // of the server process. Consequence: the manager app got the binder exactly once, and
+        // every later launch - notably after a force-stop, which restarts the app process but
+        // keeps the same uid - was silently suppressed. The app then sat at "Need to Activate"
+        // with a perfectly healthy server holding its binder. Mark the key only once we have
+        // actually dispatched, and prune it when the process/uid goes away.
+        if (SENT_BINDERS.contains(key)) {
             LOGGER.v("Skip duplicate binder send for %s", key);
             return;
         }
@@ -62,19 +103,30 @@ public class BinderSender {
 
         boolean isOurManager = packages.contains(ServerConstants.MANAGER_APPLICATION_ID);
 
-        IShizukuService shizukuService = axeronService.getShizukuService();
-
-        // 🔒 secure fast-path
-        if (shizukuService == null && isOurManager) {
-            LOGGER.d(
-                    "Shizuku unavailable, uid %d belongs to manager, send binder directly",
-                    uid
-            );
-            AxeronService.sendBinderToManager(axeronService.asBinder(), userId);
+        // 🔒 The manager app is the Axeron UI and always speaks IAxeronService - it obtains
+        // the Shizuku service *through* that binder (IAxeronService.getShizukuService()).
+        // It must therefore always be sent the AxeronService binder, never the Shizuku
+        // intercept binder.
+        //
+        // This used to be gated on `shizukuService == null`, so once the Shizuku intercept
+        // (AX-Scope / ax_perm_companion) was enabled the manager fell through to the generic
+        // client loop below and was handed shizukuService.asBinder() instead. The manager then
+        // treated a Shizuku binder as IAxeronService, every transaction failed with
+        // SecurityException("Binder invocation to an incorrect interface"), getAxeronInfo()
+        // fell back to its placeholder, and the Home screen sat on "Need to Activate" while
+        // the server was perfectly healthy. It also clobbered a working binder, because a
+        // later push replaces whatever the app already held.
+        if (isOurManager) {
+            LOGGER.d("uid %d belongs to manager, send axeron binder directly", uid);
+            if (AxeronService.sendBinderToManager(axeronService.asBinder(), userId)) {
+                SENT_BINDERS.add(key);
+            }
             return;
         }
 
-        // Kalau bukan manager, dan shizuku null → STOP
+        IShizukuService shizukuService = axeronService.getShizukuService();
+
+        // Non-manager app and no Shizuku service → nothing to hand out.
         if (shizukuService == null)
             return;
 
@@ -102,10 +154,13 @@ public class BinderSender {
                             == PackageManager.PERMISSION_GRANTED;
 
                     if (granted) {
-                        AxeronService.sendBinderToManager(
-                                axeronService.asBinder(),
+                        if (AxeronService.sendBinderToUserApp(
+                                shizukuService.asBinder(),
+                                packageName,
                                 userId
-                        );
+                        )) {
+                            SENT_BINDERS.add(key);
+                        }
                         return;
                     }
 
@@ -117,10 +172,13 @@ public class BinderSender {
                             == PackageManager.PERMISSION_GRANTED;
 
                     if (granted) {
-                        AxeronService.sendBinderToShizukuManager(
+                        if (AxeronService.sendBinderToUserApp(
                                 shizukuService.asBinder(),
+                                ServerConstants.SHIZUKU_MANAGER_APPLICATION_ID,
                                 userId
-                        );
+                        )) {
+                            SENT_BINDERS.add(key);
+                        }
                         return;
                     }
 
@@ -246,6 +304,8 @@ public class BinderSender {
             synchronized (PID_LIST) {
                 PID_LIST.remove(pid);
             }
+
+            pruneSentBinders(uid, pid);
         }
 
         @Override
@@ -261,6 +321,73 @@ public class BinderSender {
 
             sendBinder(uid, pid);
         }
+    }
+
+    /**
+     * Lets an app ask us to hand over the binder on demand.
+     *
+     * The observer-driven push above is best-effort: it depends on the platform delivering
+     * {@code onUidActive} / {@code onProcessStateChanged} after a force-stop, and some builds
+     * do not. This is the deterministic fallback - the manager broadcasts
+     * {@code AxRuntime.REQUEST_BINDER} with a binder of its own in the {@code data} extra, and
+     * we transact straight back into it.
+     *
+     * Note this is deliberately not {@code ShellBinderRequestHandler}: that one replies with
+     * {@code Axeron.getBinder()}, which is only meaningful inside the manager process (where the
+     * manager brokers a binder it already holds). Inside the server process the binder we own
+     * is {@code axeronService} itself.
+     */
+    public static void registerBinderRequestReceiver(Context context, IAxeronService service) {
+        if (binderRequestReceiver != null) return;
+
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                if (!ServerConstants.REQUEST_BINDER_DIRECT.equals(intent.getAction())) {
+                    return;
+                }
+
+                IBinder target = intent.getBundleExtra("data") == null
+                        ? null
+                        : requireDataBinder(intent);
+
+                if (target == null) {
+                    LOGGER.w("binder request without a reply target");
+                    return;
+                }
+
+                Parcel data = Parcel.obtain();
+                try {
+                    data.writeStrongBinder(service.asBinder());
+                    data.writeString(ctx.getApplicationInfo().nativeLibraryDir);
+                    target.transact(1, data, null, IBinder.FLAG_ONEWAY);
+                    LOGGER.d("answered a binder request");
+                } catch (Throwable tr) {
+                    LOGGER.w(tr, "failed to answer binder request");
+                } finally {
+                    data.recycle();
+                }
+            }
+        };
+
+        IntentFilter filter = new IntentFilter(ServerConstants.REQUEST_BINDER_DIRECT);
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                // The request comes from the manager, a different package, so this has to be
+                // exported for the broadcast to arrive at all.
+                context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED);
+            } else {
+                context.registerReceiver(receiver, filter);
+            }
+            binderRequestReceiver = receiver;
+            LOGGER.d("registered binder request receiver");
+        } catch (Throwable tr) {
+            LOGGER.w(tr, "registerReceiver failed");
+        }
+    }
+
+    private static IBinder requireDataBinder(Intent intent) {
+        return intent.getBundleExtra("data").getBinder("binder");
     }
 
     private static class UidObserver extends UidObserverAdapter {
@@ -313,8 +440,10 @@ public class BinderSender {
         private void uidGone(int uid) {
             synchronized (UID_LIST) {
                 UID_LIST.remove(uid);
-                LOGGER.v("Uid %d dead", uid);
             }
+            LOGGER.v("Uid %d dead", uid);
+
+            pruneSentBindersForUid(uid);
         }
     }
 }

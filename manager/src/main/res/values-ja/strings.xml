@@ -275,6 +275,8 @@
     <string name="accent_intensity_desc">アクセントカラーの彩度を調整します</string>
     <string name="bottom_bar_size">ボトムバーのサイズ</string>
     <string name="bottom_bar_size_desc">フローティングナビゲーションピルのサイズを調整します</string>
+    <string name="ui_scale">UI スケール</string>
+    <string name="ui_scale_desc">アプリ全体のインターフェースを拡大縮小します</string>
     <string name="secondary_color">セカンダリカラー</string>
     <string name="tertiary_color">ターシャリカラー</string>
     <string name="secondary_tertiary_not_set">未設定</string>

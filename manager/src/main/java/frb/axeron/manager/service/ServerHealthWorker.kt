@@ -25,9 +25,29 @@ class ServerHealthWorker(
 
         if (!AxeronSettings.getWasRunning()) return Result.success()
 
+        // Proof-of-death gate. ADB has no su, so it must probe over the ADB channel; root uses
+        // its shell. Inconclusive means "assume alive" - see ServerProcessUtil.
+        val launchMode = AxeronSettings.getLastLaunchMode()
+        val dead = when (launchMode) {
+            AxeronSettings.LaunchMethod.ADB ->
+                ServerProcessUtil.isServerDefinitelyDeadOverAdb(applicationContext)
+            else -> ServerProcessUtil.isServerDefinitelyDead()
+        }
+        if (!dead) {
+            Log.w(TAG, "Server process is alive (or could not be confirmed dead); skip restart")
+            if (launchMode != AxeronSettings.LaunchMethod.ADB &&
+                Shell.getCachedShell() == null
+            ) {
+                // Root mode with no shell yet - ask for one without blocking, so this worker
+                // (and the thread it borrows) is never parked waiting for root.
+                ServerProcessUtil.requestShellAsync()
+            }
+            return Result.success()
+        }
+
         Log.w(TAG, "Server is dead — attempting auto-restart from WorkManager")
 
-        when (AxeronSettings.getLastLaunchMode()) {
+        when (launchMode) {
             AxeronSettings.LaunchMethod.ROOT -> tryRootRestart()
             AxeronSettings.LaunchMethod.ADB -> tryAdbRestart()
         }
@@ -37,11 +57,12 @@ class ServerHealthWorker(
 
     private fun tryRootRestart() {
         runCatching {
-            if (Shell.getShell().isRoot) {
+            val shell = Shell.getCachedShell()
+            if (shell != null && shell.isAlive && shell.isRoot) {
                 Shell.cmd(Starter.internalCommand).exec()
                 Log.i(TAG, "Auto-restart via root: command sent")
             } else {
-                Log.w(TAG, "Auto-restart via root: no root access")
+                Log.w(TAG, "Auto-restart via root: no cached root shell available")
             }
         }.onFailure {
             Log.e(TAG, "Auto-restart via root failed", it)
@@ -49,16 +70,20 @@ class ServerHealthWorker(
     }
 
     private suspend fun tryAdbRestart() {
-        val tcpPort = AxeronSettings.getTcpPort()
-        if (tcpPort > 0) {
-            runCatching {
-                AdbStarter.startAdbClient(applicationContext, tcpPort) {}
-                Log.i(TAG, "Auto-restart via ADB TCP: command sent to port $tcpPort")
-            }.onFailure {
-                Log.e(TAG, "Auto-restart via ADB failed", it)
-            }
-        } else {
-            Log.w(TAG, "Auto-restart via ADB: no TCP port configured")
+        // Shared with the liveness probe on purpose - see AdbStarter.resolvePort(). This used to
+        // only consider getTcpPort(), which is 0 unless TCP mode is enabled, so in the default
+        // mDNS pairing the worker logged "no TCP port configured" and never restarted anything.
+        val port = AdbStarter.resolvePort()
+        if (port <= 0) {
+            Log.w(TAG, "Auto-restart via ADB: no usable port")
+            return
+        }
+
+        runCatching {
+            AdbStarter.startAdbClient(applicationContext, port) {}
+            Log.i(TAG, "Auto-restart via ADB: command sent to port $port")
+        }.onFailure {
+            Log.e(TAG, "Auto-restart via ADB failed", it)
         }
     }
 }

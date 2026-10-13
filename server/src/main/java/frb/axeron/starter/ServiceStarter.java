@@ -4,6 +4,7 @@ import static frb.axeron.shared.ShizukuApiConstant.USER_SERVICE_ARG_PGID;
 import static frb.axeron.shared.ShizukuApiConstant.USER_SERVICE_ARG_TOKEN;
 
 import android.content.IContentProvider;
+import android.content.pm.ApplicationInfo;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
@@ -18,6 +19,7 @@ import frb.axeron.server.util.Logger;
 import kotlin.Triple;
 import moe.shizuku.api.BinderContainer;
 import rikka.hidden.compat.ActivityManagerApis;
+import rikka.hidden.compat.PackageManagerApis;
 
 public class ServiceStarter {
 
@@ -89,14 +91,20 @@ public class ServiceStarter {
     }
 
     private static boolean sendBinder(IBinder binder, String token, int pgid) {
-        return sendBinder(binder, token, pgid, true);
-    }
-
-    private static boolean sendBinder(IBinder binder, String token, int pgid, boolean retry) {
         String packageName = ServerConstants.MANAGER_APPLICATION_ID;
         String name = packageName + ".server";
         int userId = 0;
         IContentProvider provider = null;
+
+        try {
+            ApplicationInfo appInfo = PackageManagerApis.getApplicationInfoNoThrow(packageName, 0, userId);
+            if (appInfo != null && (appInfo.flags & ApplicationInfo.FLAG_STOPPED) != 0) {
+                LOGGER.d("skip sending binder to force-stopped %s in user %d", packageName, userId);
+                return false;
+            }
+        } catch (Throwable t) {
+            LOGGER.w(t, "check FLAG_STOPPED for " + packageName);
+        }
 
         try {
             provider = ActivityManagerApis.getContentProviderExternal(name, userId, null, name);
@@ -106,20 +114,7 @@ public class ServiceStarter {
             }
             if (!provider.asBinder().pingBinder()) {
                 LOGGER.e("provider is dead %s %d", name, userId);
-
-                if (retry) {
-                    // For unknown reason, sometimes this could happens
-                    // Kill Shizuku app and try again could work
-                    ActivityManagerApis.forceStopPackageNoThrow(packageName, userId);
-                    LOGGER.e("kill %s in user %d and try again", packageName, userId);
-                    Thread.sleep(1000);
-                    return sendBinder(binder, token, pgid, false);
-                }
                 return false;
-            }
-
-            if (!retry) {
-                LOGGER.e("retry works");
             }
 
             Bundle extra = new Bundle();

@@ -23,63 +23,77 @@ class AxManagerProvider : AxeronProvider() {
     }
 
     override fun call(method: String, arg: String?, extras: Bundle?): Bundle? {
-        if (extras == null) return null
+        if (extras == null) {
+            LOGGER.w("call($method) with null extras")
+            return null
+        }
 
-        return if (method == METHOD_SEND_USER_SERVICE) {
-            LOGGER.d("sendUserService")
-            try {
-                extras.classLoader = BinderContainer::class.java.classLoader
+        // Whatever the base class throws has to be marshalled back across binder. If the
+        // server cannot resolve the exception class it blows up while *reading* the reply and
+        // all it can report is an opaque NullPointerException from Parcel.createExceptionOrNull,
+        // which hides the real cause completely. Catching here keeps the real throwable in
+        // this process, where it is readable, and guarantees a usable reply Bundle.
+        return try {
+            if (method == METHOD_SEND_USER_SERVICE) {
+                LOGGER.d("sendUserService")
+                try {
+                    extras.classLoader = BinderContainer::class.java.classLoader
 
-                val token = extras.getString(USER_SERVICE_ARG_TOKEN) ?: return null
-                val pgid = extras.getInt(USER_SERVICE_ARG_PGID)
-                val binder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    extras.getParcelable(EXTRA_BINDER,  BinderContainer::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    extras.getParcelable(EXTRA_BINDER)
-                }?.binder ?: return null
+                    val token = extras.getString(USER_SERVICE_ARG_TOKEN) ?: return null
+                    val pgid = extras.getInt(USER_SERVICE_ARG_PGID)
+                    val binder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        extras.getParcelable(EXTRA_BINDER,  BinderContainer::class.java)
+                    } else {
+                        @Suppress("DEPRECATION")
+                        extras.getParcelable(EXTRA_BINDER)
+                    }?.binder ?: return null
 
-                val countDownLatch = CountDownLatch(1)
-                var reply: Bundle? = Bundle()
+                    val countDownLatch = CountDownLatch(1)
+                    var reply: Bundle? = Bundle()
 
-                val listener = object : Axeron.OnBinderReceivedListener {
+                    val listener = object : Axeron.OnBinderReceivedListener {
 
-                    override fun onBinderReceived() {
-                        try {
-                            Axeron.attachUserService(binder, bundleOf(
-                                USER_SERVICE_ARG_TOKEN to token,
-                                USER_SERVICE_ARG_PGID to pgid
-                            )
-                            )
-                            reply!!.putParcelable(EXTRA_BINDER,
-                                BinderContainer(Axeron.getShizukuService().asBinder())
-                            )
-                        } catch (e: Throwable) {
-                            LOGGER.e(e, "attachUserService $token")
-                            reply = null
+                        override fun onBinderReceived() {
+                            try {
+                                Axeron.attachUserService(binder, bundleOf(
+                                    USER_SERVICE_ARG_TOKEN to token,
+                                    USER_SERVICE_ARG_PGID to pgid
+                                )
+                                )
+                                reply!!.putParcelable(EXTRA_BINDER,
+                                    BinderContainer(Axeron.getShizukuService().asBinder())
+                                )
+                            } catch (e: Throwable) {
+                                LOGGER.e(e, "attachUserService $token")
+                                reply = null
+                            }
+
+                            Axeron.removeBinderReceivedListener(this)
+
+                            countDownLatch.countDown()
                         }
-
-                        Axeron.removeBinderReceivedListener(this)
-
-                        countDownLatch.countDown()
                     }
-                }
 
-                Axeron.addBinderReceivedListenerSticky(listener, workerHandler)
+                    Axeron.addBinderReceivedListenerSticky(listener, workerHandler)
 
-                return try {
-                    countDownLatch.await(5, TimeUnit.SECONDS)
-                    reply
-                } catch (e: TimeoutException) {
-                    LOGGER.e(e, "Binder not received in 5s")
+                    return try {
+                        countDownLatch.await(5, TimeUnit.SECONDS)
+                        reply
+                    } catch (e: TimeoutException) {
+                        LOGGER.e(e, "Binder not received in 5s")
+                        null
+                    }
+                } catch (e: Throwable) {
+                    LOGGER.e(e, "sendUserService")
                     null
                 }
-            } catch (e: Throwable) {
-                LOGGER.e(e, "sendUserService")
-                null
+            } else {
+                LOGGER.d("call($method) -> super, pingBinder=%b", Axeron.pingBinder())
+                super.call(method, arg, extras)
             }
-        } else {
-            super.call(method, arg, extras)
+        } catch (t: Throwable) {
+            LOGGER.e(t, "call($method) failed")
+            Bundle()
         }
     }
 }
